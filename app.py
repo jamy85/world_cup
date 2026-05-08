@@ -12,96 +12,134 @@ st.markdown("""
         background-attachment: fixed;
         background-size: cover;
     }
-    /* Semi-transparent containers for data visibility */
     [data-testid="stVerticalBlock"] > div:has(div.stMarkdown) {
         background-color: rgba(255, 255, 255, 0.95);
-        padding: 25px;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
-    .tier-gold { border-left: 10px solid #FFD700; background: #FFFDF0; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: bold; }
-    .tier-silver { border-left: 10px solid #C0C0C0; background: #F5F5F5; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: bold; }
-    .tier-bronze { border-left: 10px solid #CD7F32; background: #FAF3EE; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: bold; }
-    .tier-neutral { border-left: 10px solid #95A5A6; background: #FDFDFD; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: bold; }
-    
-    /* Flex container for Flag + Name */
     .country-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
     .country-row img { width: 30px; height: auto; border-radius: 2px; }
+    .bracket-round { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background: #f9f9f9; margin-bottom: 5px; text-align: center;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATA DEFINITIONS ---
-def get_flag(code):
-    return f"https://flagcdn.com/w40/{code.lower()}.png"
+# --- 2. DATA UTILITIES ---
+def get_flag_url(name_or_code):
+    # Mapping for fixtures and tiers
+    mapping = {
+        "Mexico": "mx", "South Africa": "za", "South Korea": "kr", "Czechia": "cz",
+        "Canada": "ca", "Bosnia": "ba", "Qatar": "qa", "Switzerland": "ch",
+        "Brazil": "br", "Morocco": "ma", "Haiti": "ht", "Scotland": "gb-sct",
+        "USA": "us", "Paraguay": "py", "Australia": "au", "Türkiye": "tr",
+        "France": "fr", "Argentina": "ar", "Spain": "es", "England": "gb-eng",
+        "Netherlands": "nl", "Portugal": "pt", "Germany": "de"
+    }
+    code = mapping.get(name_or_code, "un")
+    return f"https://flagcdn.com/w80/{code.lower()}.png"
 
-# Updated Tiers with Codes
-TIERS = {
-    "Gold": {"pts": 30, "class": "tier-gold", "teams": [("FR", "France"), ("AR", "Argentina"), ("ES", "Spain"), ("GB-ENG", "England"), ("BR", "Brazil"), ("NL", "Netherlands"), ("PT", "Portugal"), ("MA", "Morocco")]},
-    "Silver": {"pts": 20, "class": "tier-silver", "teams": [("BE", "Belgium"), ("DE", "Germany"), ("HR", "Croatia"), ("UY", "Uruguay"), ("CO", "Colombia"), ("SN", "Senegal"), ("US", "USA"), ("MX", "Mexico")]},
-    "Bronze": {"pts": 10, "class": "tier-bronze", "teams": [("CH", "Switzerland"), ("JP", "Japan"), ("KR", "South Korea"), ("SE", "Sweden"), ("EC", "Ecuador"), ("CI", "Ivory Coast"), ("AT", "Austria"), ("EG", "Egypt"), ("NO", "Norway"), ("AU", "Australia"), ("GH", "Ghana"), ("CA", "Canada")]},
-    "Neutral": {"pts": 0, "class": "tier-neutral", "teams": [("ZA", "South Africa"), ("CZ", "Czechia"), ("BA", "Bosnia"), ("QA", "Qatar"), ("HT", "Haiti"), ("GB-SCT", "Scotland"), ("PY", "Paraguay"), ("TR", "Türkiye")]}
-}
+# --- 3. THE LEADERBOARD DATA ---
+# (Simulated data - replace with your collated CSV)
+try:
+    df_participants = pd.read_csv("participants.csv")
+except:
+    df_participants = pd.DataFrame({
+        "Participant": ["Sarah", "David", "James"],
+        "Team_1": ["France", "Brazil", "Germany"], "Pos_1": ["LONG", "LONG", "SHORT"],
+        "Team_2": ["USA", "England", "Japan"], "Pos_2": ["LONG", "SHORT", "LONG"],
+        "Team_3": ["Germany", "Ghana", "Morocco"], "Pos_3": ["SHORT", "LONG", "LONG"]
+    })
 
-# Official 2026 Opening Fixtures (Singapore Time - SGT)
-FIXTURES = [
-    {"Date": "12 Jun", "Time (SGT)": "03:00 AM", "Match": "🇲🇽 Mexico vs South Africa 🇿🇦", "Group": "A"},
-    {"Date": "12 Jun", "Time (SGT)": "10:00 AM", "Match": "🇰🇷 South Korea vs Czechia 🇨🇿", "Group": "A"},
-    {"Date": "13 Jun", "Time (SGT)": "03:00 AM", "Match": "🇨🇦 Canada vs Bosnia 🇧🇦", "Group": "B"},
-    {"Date": "13 Jun", "Time (SGT)": "09:00 AM", "Match": "🇺🇸 USA vs Paraguay 🇵🇾", "Group": "D"},
-    {"Date": "14 Jun", "Time (SGT)": "03:00 AM", "Match": "🇶🇦 Qatar vs Switzerland 🇨🇭", "Group": "B"},
-    {"Date": "14 Jun", "Time (SGT)": "06:00 AM", "Match": "🇧🇷 Brazil vs Morocco 🇲🇦", "Group": "C"},
-    {"Date": "14 Jun", "Time (SGT)": "09:00 AM", "Match": "🇭🇹 Haiti vs Scotland 🏴󠁧󠁢󠁳󠁣󠁴󠁿", "Group": "C"},
-    {"Date": "14 Jun", "Time (SGT)": "12:00 PM", "Match": "🇦🇺 Australia vs Türkiye 🇹🇷", "Group": "D"},
-    {"Date": "15 Jun", "Time (SGT)": "01:00 AM", "Match": "🇩🇪 Germany vs Curaçao 🇨🇼", "Group": "E"},
-]
-
-# Function to color the Long/Short cells
-def color_positions(val):
-    if val == "LONG":
-        return 'background-color: #d4edda; color: #155724; font-weight: bold;'
-    elif val == "SHORT":
-        return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
-    return ''
-
-# --- 3. UI TABS ---
+# --- 4. UI TABS ---
 st.title("🏆 World Cup 2026: Market Mover")
 
-tab1, tab2, tab3 = st.tabs(["🥇 Leaderboard", "📊 Market Groups", "📅 SGT Schedule"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🥇 Leaderboard", "📊 Market Tiers", "📈 Group Rankings", "📅 SGT Schedule", "🌳 Knockout Draw"])
 
 with tab1:
     st.header("Global Standings")
-    try:
-        df = pd.read_csv("participants.csv")
-        # Apply the styling to the position columns
-        styled_df = df.style.map(color_positions, subset=['Pos_1', 'Pos_2', 'Pos_3'])
-        
-        st.dataframe(
-            styled_df,
-            column_config={
-                "Team_1": "Team 1", "Pos_1": "Pos",
-                "Team_2": "Team 2", "Pos_2": "Pos",
-                "Team_3": "Team 3", "Pos_3": "Pos"
-            },
-            hide_index=True, use_container_width=True
-        )
-    except FileNotFoundError:
-        st.info("Upload participants.csv to see the rankings!")
+    st.write("💡 *Select a row to see a deep dive of that player's picks.*")
+    
+    # Using data_editor for selection capability
+    event = st.dataframe(
+        df_participants,
+        column_config={
+            "Pos_1": st.column_config.TextColumn("Pos", help="Long or Short"),
+            "Pos_2": st.column_config.TextColumn("Pos"),
+            "Pos_3": st.column_config.TextColumn("Pos"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row"
+    )
 
-with tab2:
-    st.header("The Tiers & Rankings")
-    t_cols = st.columns(4)
-    for i, (tier, info) in enumerate(TIERS.items()):
-        with t_cols[i]:
-            st.markdown(f"<div class='{info['class']}'>{tier} Tier ({info['pts']} pts)</div>", unsafe_allow_html=True)
-            for code, name in info["teams"]:
-                # Custom HTML for single-line Flag + Name
-                st.markdown(f"""
-                    <div class="country-row">
-                        <img src="{get_flag(code)}">
-                        <span>{name}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+    # --- THE "PERSONALIZED" RESULTS SECTION ---
+    if len(event.selection.rows) > 0:
+        idx = event.selection.rows[0]
+        p_name = df_participants.iloc[idx]["Participant"]
+        st.divider()
+        st.subheader(f"🔍 Deep Dive: {p_name}")
+        
+        # Show results for their 3 teams
+        p_cols = st.columns(3)
+        for i in range(1, 4):
+            team = df_participants.iloc[idx][f"Team_{i}"]
+            pos = df_participants.iloc[idx][f"Pos_{i}"]
+            with p_cols[i-1]:
+                st.image(get_flag_url(team), width=50)
+                st.metric(label=f"Team {i}: {team}", value=pos, delta="Live Points: +12") # Placeholder logic
+                st.caption(f"Status: In Group Stage")
 
 with tab3:
-    st.header("Tournament Schedule (Singapore Time)")
-    st.dataframe(pd.DataFrame(FIXTURES), hide_index=True, use_container_width=True)
+    st.header("Current Group Standings")
+    # Sample Table
+    group_data = pd.DataFrame([
+        {"Group": "A", "Team": "Mexico", "GP": 0, "GD": 0, "Pts": 0},
+        {"Group": "A", "Team": "South Africa", "GP": 0, "GD": 0, "Pts": 0},
+    ])
+    group_data["Flag"] = group_data["Team"].apply(get_flag_url)
+    
+    st.dataframe(
+        group_data,
+        column_config={"Flag": st.column_config.ImageColumn(" ", width="small")},
+        hide_index=True, use_container_width=True
+    )
+
+with tab4:
+    st.header("Schedule (Singapore Time)")
+    
+    # Mock Schedule with Flags
+    fixtures_df = pd.DataFrame([
+        {"Date": "12 Jun", "Time": "03:00 AM", "T1": "Mexico", "T2": "South Africa", "Grp": "A"},
+        {"Date": "12 Jun", "Time": "10:00 AM", "T1": "South Korea", "T2": "Czechia", "Grp": "A"},
+    ])
+    
+    fixtures_df["Flag 1"] = fixtures_df["T1"].apply(get_flag_url)
+    fixtures_df["Flag 2"] = fixtures_df["T2"].apply(get_flag_url)
+
+    st.dataframe(
+        fixtures_df[["Date", "Time", "Flag 1", "T1", "Flag 2", "T2", "Grp"]],
+        column_config={
+            "Flag 1": st.column_config.ImageColumn(" "),
+            "Flag 2": st.column_config.ImageColumn(" "),
+            "T1": "Home", "T2": "Away"
+        },
+        hide_index=True, use_container_width=True
+    )
+
+with tab5:
+    st.header("Knockout Stage Bracket")
+    st.write("The bracket will populate as teams qualify from the group stage.")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.write("**Round of 32**")
+        st.markdown("<div class='bracket-round'>Winner A vs Runner-up B</div>", unsafe_allow_html=True)
+        st.markdown("<div class='bracket-round'>Winner C vs Runner-up D</div>", unsafe_allow_html=True)
+    with c2:
+        st.write("**Round of 16**")
+        st.markdown("<div class='bracket-round' style='margin-top:20px'>TBD</div>", unsafe_allow_html=True)
+    with c3:
+        st.write("**Quarter-Finals**")
+        st.markdown("<div class='bracket-round' style='margin-top:40px'>TBD</div>", unsafe_allow_html=True)
+    with c4:
+        st.write("**Final**")
+        st.markdown("<div class='bracket-round' style='background: gold; margin-top:60px'>🏆 CHAMPION 🏆</div>", unsafe_allow_html=True)
