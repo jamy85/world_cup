@@ -1,6 +1,12 @@
-import streamlit as st
+import datetime
+import os
+
 import pandas as pd
-from datetime import datetime
+import streamlit as st
+
+import scoring
+
+CACHE_FILE = "results_cache.csv"
 
 # --- 1. STYLING & PREMIUM GRASS BACKGROUND ---
 st.set_page_config(page_title="2026 Market Mover", layout="wide", page_icon="⚽")
@@ -23,33 +29,38 @@ st.markdown("""
     .silver-border { border-color: #C0C0C0; }
     .bronze-border { border-color: #CD7F32; }
     .neutral-border { border-color: #95A5A6; }
-    
+
     /* Country List Flexbox */
     .country-item { display: flex; align-items: center; gap: 10px; font-weight: 500; margin-bottom: 4px; }
     .country-item img { border: 1px solid #eee; border-radius: 3px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATA & API UTILS ---
+# --- 2. FLAGS & TIERS ---
 def get_flag(name_or_code):
-    # Mapping for fixtures and rankings
     mapping = {
-        "France": "fr", "Spain": "es", "Argentina": "ar", "England": "gb-eng", "Portugal": "pt", 
+        "France": "fr", "Spain": "es", "Argentina": "ar", "England": "gb-eng", "Portugal": "pt",
         "Brazil": "br", "Netherlands": "nl", "Morocco": "ma", "Belgium": "be", "Germany": "de",
         "Croatia": "hr", "Colombia": "co", "Senegal": "sn", "Mexico": "mx", "USA": "us", "Uruguay": "uy",
         "South Africa": "za", "South Korea": "kr", "Czechia": "cz", "Canada": "ca", "Bosnia": "ba",
         "Qatar": "qa", "Switzerland": "ch", "Haiti": "ht", "Scotland": "gb-sct", "Paraguay": "py",
-        "Australia": "au", "Türkiye": "tr"
+        "Australia": "au", "Türkiye": "tr", "Japan": "jp", "Ecuador": "ec", "Austria": "at",
+        "Norway": "no", "Ghana": "gh",
     }
     code = mapping.get(name_or_code, "un")
     return f"https://flagcdn.com/w40/{code.lower()}.png"
 
-# Tiers based on May 2026 Rankings
+# Tiers (visual grouping by expectation score). Points here == starting expectation.
 TIERS = {
     "Gold": {"pts": 30, "style": "gold-border", "teams": ["France", "Spain", "Argentina", "England", "Portugal", "Brazil", "Netherlands", "Morocco"]},
     "Silver": {"pts": 20, "style": "silver-border", "teams": ["Belgium", "Germany", "Croatia", "Colombia", "Senegal", "Mexico", "USA", "Uruguay"]},
     "Bronze": {"pts": 10, "style": "bronze-border", "teams": ["Japan", "Switzerland", "Türkiye", "Ecuador", "Austria", "South Korea", "Australia", "Norway"]},
-    "Neutral": {"pts": 0, "style": "neutral-border", "teams": ["Canada", "Ghana", "South Africa", "Czechia", "Bosnia", "Scotland", "Paraguay", "Qatar"]}
+    "Neutral": {"pts": 0, "style": "neutral-border", "teams": ["Canada", "Ghana", "South Africa", "Czechia", "Bosnia", "Scotland", "Paraguay", "Qatar"]},
+}
+
+ROUND_LABELS = {
+    "Group": "Group Stage", "R32": "Round of 32", "R16": "Round of 16",
+    "QF": "Quarter-Final", "SF": "Semi-Final", "Final": "Runner-up", "Winner": "🏆 Champion",
 }
 
 # SGT Schedule (GMT+8)
@@ -62,59 +73,110 @@ SGT_SCHEDULE = [
     {"Date": "14 Jun", "SGT Time": "08:00 AM", "Match": "Brazil vs Morocco", "Group": "C"},
 ]
 
-# --- 3. LEADERBOARD LOGIC ---
-try:
-    df_raw = pd.read_csv("participants.csv")
-except:
-    # Fallback dummy data for testing
-    df_raw = pd.DataFrame({
-        "Participant": ["Sarah", "David", "James"],
-        "Team 1": ["France", "Brazil", "Germany"], "Strategy 1": ["LONG", "LONG", "SHORT"],
-        "Team 2": ["USA", "England", "Japan"], "Strategy 2": ["LONG", "SHORT", "LONG"],
-        "Team 3": ["Germany", "Ghana", "Morocco"], "Strategy 3": ["SHORT", "LONG", "LONG"]
-    })
+# --- 3. DATA LOADING ---
+@st.cache_data
+def load_expectations():
+    df = pd.read_csv("team_expectations.csv")
+    return df.set_index("Team")["Expectation"].to_dict()
 
-def style_strategies(val):
-    if val == "LONG": return 'background-color: #d1e7dd; color: #0f5132; font-weight: bold; border: 1px solid #badbcc'
-    if val == "SHORT": return 'background-color: #f8d7da; color: #842029; font-weight: bold; border: 1px solid #f5c2c7'
-    return ''
+@st.cache_data
+def load_participants():
+    return pd.read_csv("participants.csv")
+
+def _states_from_cache():
+    """Read the last-known team states from disk (fallback / pre-fetch)."""
+    df = pd.read_csv(CACHE_FILE)
+    states = {}
+    for _, r in df.iterrows():
+        states[r["Team"]] = {
+            "wins": int(r["wins"]), "draws": int(r["draws"]),
+            "losses": int(r["losses"]), "round_reached": r["round_reached"],
+        }
+    return states
+
+def _save_states_to_cache(states):
+    rows = [
+        {"Team": t, "wins": s["wins"], "draws": s["draws"],
+         "losses": s["losses"], "round_reached": s["round_reached"]}
+        for t, s in states.items()
+    ]
+    pd.DataFrame(rows).to_csv(CACHE_FILE, index=False)
+
+# Fetch live results at most once per day (24h cache). Live failures fall back
+# to the on-disk cache so the leaderboard always renders.
+@st.cache_data(ttl=60 * 60 * 24, show_spinner="Fetching latest results…")
+def get_team_states(all_teams):
+    try:
+        events = scoring.fetch_events()
+        if not events:
+            raise ValueError("no events returned")
+        states = scoring.compute_team_states(events, all_teams)
+        _save_states_to_cache(states)
+        return states, "live", datetime.datetime.now()
+    except Exception as exc:  # noqa: BLE001 — any failure -> use cached results
+        states = _states_from_cache()
+        return states, f"cache ({exc})", _cache_mtime()
+
+def _cache_mtime():
+    try:
+        return datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))
+    except OSError:
+        return None
+
+# Load everything
+expectations = load_expectations()
+participants = load_participants()
+all_teams = list(expectations.keys())
+
+if st.sidebar.button("🔄 Refresh results now"):
+    get_team_states.clear()
+
+states, source, updated_at = get_team_states(tuple(all_teams))
+scores = scoring.compute_scores(participants, expectations, states)
 
 # --- 4. UI TABS ---
 st.title("🏆 World Cup 2026: Market Mover")
+
+stamp = updated_at.strftime("%d %b %Y, %H:%M") if updated_at else "unknown"
+if source == "live":
+    st.caption(f"📡 Results updated live · {stamp} · refreshes once a day")
+else:
+    st.caption(f"💾 Showing last saved results · {stamp} · live fetch unavailable, will retry")
 
 tabs = st.tabs(["🥇 Leaderboard", "📊 Market Tiers", "📈 Group Rankings", "📅 SGT Schedule", "🌳 Knockout Draw"])
 
 with tabs[0]:
     st.header("Tournament Leaderboard")
-    st.info("💡 **Click a player's row** to see a deep dive of their portfolio.")
-    
-    # Styling and Renaming
-    styled_df = df_raw.style.applymap(style_strategies, subset=["Strategy 1", "Strategy 2", "Strategy 3"])
-    
-    selection = st.dataframe(
-        styled_df,
-        hide_index=True,
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode="single-row"
-    )
+    st.info("💡 Expand a player to see how each pick contributes to their score.")
 
-    if len(selection.selection.rows) > 0:
-        idx = selection.selection.rows[0]
-        row = df_raw.iloc[idx]
-        st.divider()
-        st.subheader(f"🔍 Portfolio Insight: {row['Participant']}")
-        cols = st.columns(3)
-        for i in range(1, 4):
-            with cols[i-1]:
-                team = row[f"Team {i}"]
-                strat = row[f"Strategy {i}"]
-                st.image(get_flag(team), width=60)
-                st.metric(team, strat, delta="Live Tier Bonus: +15")
-                st.caption("Expected Progress: " + str(next((v['pts'] for k,v in TIERS.items() if team in v['teams']), 0)) + " pts")
+    board = pd.DataFrame([
+        {"Rank": i + 1, "Player": p["name"], "Score": p["total"]}
+        for i, p in enumerate(scores["players"])
+    ])
+    st.dataframe(board, hide_index=True, use_container_width=True)
+
+    st.divider()
+    st.subheader("🔍 Portfolio breakdowns")
+    for p in scores["players"]:
+        with st.expander(f"**{p['name']}** — {p['total']:+d} pts"):
+            cols = st.columns(3)
+            for col, pick in zip(cols, p["picks"]):
+                with col:
+                    st.image(get_flag(pick["team"]), width=50)
+                    pos_emoji = "📈" if pick["position"] == "Long" else "📉"
+                    st.metric(
+                        f"{pos_emoji} {pick['team']} ({pick['position']})",
+                        f"{pick['total']:+d} pts",
+                    )
+                    st.caption(
+                        f"Reached: {ROUND_LABELS.get(pick['round_reached'], pick['round_reached'])}  \n"
+                        f"Expectation: {pick['expectation']}  ·  Record: {pick['record']}  \n"
+                        f"Progression {pick['progression']:+d} · League {pick['league']:+d}"
+                    )
 
 with tabs[1]:
     st.header("The Market Tiers")
+    st.caption("A team's starting **expectation** is its tier value. Beat it to score; fall short to lose points (reversed for Short picks).")
     t_cols = st.columns(4)
     for i, (tier, data) in enumerate(TIERS.items()):
         with t_cols[i]:
@@ -123,35 +185,35 @@ with tabs[1]:
                 st.markdown(f"<div class='country-item'><img src='{get_flag(team)}' width='25'> {team}</div>", unsafe_allow_html=True)
 
 with tabs[2]:
-    st.header("Group Standings")
-    # Generating mock rankings for Group A & B
-    standings = pd.DataFrame([
-        {"Group": "A", "Team": "Mexico", "GP": 0, "GD": 0, "Pts": 0},
-        {"Group": "A", "Team": "South Africa", "GP": 0, "GD": 0, "Pts": 0},
-        {"Group": "B", "Team": "Canada", "GP": 0, "GD": 0, "Pts": 0},
-        {"Group": "B", "Team": "Switzerland", "GP": 0, "GD": 0, "Pts": 0},
-    ])
-    standings["Flag"] = standings["Team"].apply(get_flag)
+    st.header("Group Stage Standings")
+    st.caption("Live W/D/L and points (3 for a win, 1 for a draw) from the group stage.")
+    rows = []
+    for team, s in states.items():
+        played = s["wins"] + s["draws"] + s["losses"]
+        rows.append({
+            "Flag": get_flag(team), "Team": team, "P": played,
+            "W": s["wins"], "D": s["draws"], "L": s["losses"],
+            "Pts": 3 * s["wins"] + s["draws"], "Round": ROUND_LABELS.get(s["round_reached"], s["round_reached"]),
+        })
+    standings = pd.DataFrame(rows).sort_values(["Pts", "W"], ascending=False)
     st.dataframe(
-        standings[["Group", "Flag", "Team", "GP", "GD", "Pts"]],
+        standings,
         column_config={"Flag": st.column_config.ImageColumn(" ")},
-        hide_index=True, use_container_width=True
+        hide_index=True, use_container_width=True,
     )
 
 with tabs[3]:
     st.header("Singapore Time Schedule")
     sched_df = pd.DataFrame(SGT_SCHEDULE)
-    # Extracting team names to get flags
     sched_df["Flag 1"] = sched_df["Match"].apply(lambda x: get_flag(x.split(" vs ")[0]))
     sched_df["Flag 2"] = sched_df["Match"].apply(lambda x: get_flag(x.split(" vs ")[1]))
-    
     st.dataframe(
         sched_df[["Date", "SGT Time", "Flag 1", "Match", "Flag 2", "Group"]],
         column_config={
             "Flag 1": st.column_config.ImageColumn(" "),
-            "Flag 2": st.column_config.ImageColumn(" ")
+            "Flag 2": st.column_config.ImageColumn(" "),
         },
-        hide_index=True, use_container_width=True
+        hide_index=True, use_container_width=True,
     )
 
 with tabs[4]:
