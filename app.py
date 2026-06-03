@@ -20,10 +20,15 @@ st.markdown("""
         background-attachment: fixed;
         background-size: cover;
     }
-    /* Main container styling */
-    [data-testid="stVerticalBlock"] > div:has(div.stMarkdown) {
+    /* One white card for the whole page (was: a box around every element,
+       which trapped each table in its own narrow box). */
+    .block-container {
         background-color: rgba(255, 255, 255, 0.96);
-        padding: 30px; border-radius: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        padding: 2rem 2.5rem 3rem;
+        border-radius: 20px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        margin-top: 2rem;
+        margin-bottom: 2rem;
     }
     /* Custom Tiers */
     .tier-card { border-left: 12px solid; padding: 15px; border-radius: 10px; margin-bottom: 15px; background: #fff; overflow-wrap: break-word; word-break: break-word; box-sizing: border-box; width: 100%; }
@@ -43,10 +48,10 @@ st.markdown("""
     .wc-table-wrap { overflow-x: auto; width: 100%; }
     .wc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     .wc-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid #e0e0e0; font-weight: 600; background: #f7f7f7; white-space: nowrap; }
-    .wc-table td { padding: 6px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    .wc-table td { padding: 6px 10px; border-bottom: 1px solid #eee; }      /* cells wrap so the table fits its card */
     .wc-table tr:last-child td { border-bottom: none; }
     .wc-table img { vertical-align: middle; border: 1px solid #eee; border-radius: 3px; }
-    .wc-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .wc-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     </style>
     """, unsafe_allow_html=True)
 
