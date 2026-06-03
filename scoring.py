@@ -26,12 +26,12 @@ import requests
 # final; "Final" is awarded to the beaten finalist.
 ROUND_POINTS = {
     "Group": 0,
-    "R32": 10,
-    "R16": 20,
-    "QF": 40,
-    "SF": 60,
-    "Final": 80,
-    "Winner": 100,
+    "R32": 8,
+    "R16": 18,
+    "QF": 32,
+    "SF": 48,
+    "Final": 65,
+    "Winner": 85,
 }
 
 # Order used to decide which round is "furthest reached".
@@ -182,13 +182,13 @@ def compute_team_states(events: list[dict], all_teams: list[str]) -> dict:
     (played or scheduled). The final's winner is promoted to "Winner".
     """
     states = {
-        t: {"wins": 0, "draws": 0, "losses": 0, "round_reached": "Group"}
+        t: {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0, "round_reached": "Group"}
         for t in all_teams
     }
 
     def _ensure(team):
         if team and team not in states:
-            states[team] = {"wins": 0, "draws": 0, "losses": 0, "round_reached": "Group"}
+            states[team] = {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0, "round_reached": "Group"}
 
     for ev in events:
         home, away, stage = ev["home"], ev["away"], ev["stage"]
@@ -208,6 +208,10 @@ def compute_team_states(events: list[dict], all_teams: list[str]) -> dict:
         hs, as_ = ev["home_score"], ev["away_score"]
 
         if stage == "Group":
+            states[home]["gf"] += hs
+            states[home]["ga"] += as_
+            states[away]["gf"] += as_
+            states[away]["ga"] += hs
             if hs > as_:
                 states[home]["wins"] += 1
                 states[away]["losses"] += 1
