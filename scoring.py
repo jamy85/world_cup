@@ -65,6 +65,15 @@ _NAME_ALIASES = {
     "bosnia and herzegovina": "Bosnia",
     "bosnia": "Bosnia",
     "bosnia & herzegovina": "Bosnia",
+    "bosnia-herzegovina": "Bosnia",
+    "ivory coast": "Ivory Coast",
+    "côte d'ivoire": "Ivory Coast",
+    "cote d'ivoire": "Ivory Coast",
+    "dr congo": "DR Congo",
+    "democratic republic of congo": "DR Congo",
+    "congo dr": "DR Congo",
+    "cape verde": "Cape Verde",
+    "cabo verde": "Cape Verde",
 }
 
 
@@ -132,10 +141,13 @@ def _find_world_cup_league_id(session: requests.Session) -> str:
 
 
 def fetch_events() -> list[dict]:
-    """Fetch World Cup 2026 events from the web.
+    """Fetch raw World Cup 2026 fixtures from TheSportsDB.
 
-    Returns a list of normalised event dicts:
-        {home, away, home_score, away_score, stage, finished}
+    Returns normalised dicts with the score and matchday round; the *stage* is
+    deliberately NOT inferred here — TheSportsDB leaves strStage/strGroup empty
+    for this tournament, so the caller maps each event onto our own schedule
+    (which already knows the stage) instead:
+        {home, away, home_score, away_score, round, finished}
     Raises on any network/parse failure so the caller can fall back to cache.
     """
     session = requests.Session()
@@ -152,12 +164,8 @@ def fetch_events() -> list[dict]:
     for ev in raw_events:
         if _is_third_place(ev.get("strStage", "")):
             continue
-        stage = _classify_stage(
-            ev.get("strStage", ""), ev.get("strGroup", ""), ev.get("intRound", "")
-        )
-        if stage is None:
-            continue
         hs, as_ = ev.get("intHomeScore"), ev.get("intAwayScore")
+        rnd = ev.get("intRound")
         finished = (
             str(ev.get("strStatus", "")).lower() in {"match finished", "ft", "finished", "aet", "pen"}
             or (hs not in (None, "") and as_ not in (None, ""))
@@ -168,10 +176,35 @@ def fetch_events() -> list[dict]:
                 "away": canonical_team(ev.get("strAwayTeam", "")),
                 "home_score": int(hs) if str(hs).strip().isdigit() else None,
                 "away_score": int(as_) if str(as_).strip().isdigit() else None,
-                "stage": stage,
+                "round": int(rnd) if str(rnd).strip().isdigit() else None,
                 "finished": bool(finished),
             }
         )
+    return events
+
+
+def build_events(results: list[dict]) -> list[dict]:
+    """Turn match-result rows into events for compute_team_states().
+
+    Each row needs: home, away, home_score, away_score, stage (a ROUND_ORDER
+    key). Rows with an unknown stage or missing scores are skipped.
+    """
+    events = []
+    for r in results:
+        stage = r.get("stage")
+        if stage not in ROUND_ORDER:
+            continue
+        hs, as_ = r.get("home_score"), r.get("away_score")
+        if hs is None or as_ is None:
+            continue
+        events.append({
+            "home": canonical_team(r.get("home", "")),
+            "away": canonical_team(r.get("away", "")),
+            "home_score": int(hs),
+            "away_score": int(as_),
+            "stage": stage,
+            "finished": True,
+        })
     return events
 
 
@@ -193,17 +226,23 @@ def compute_team_states(events: list[dict], all_teams: list[str]) -> dict:
         if team and team not in states:
             states[team] = {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0, "round_reached": "Group"}
 
+    def _promote(team, stage):
+        if team and ROUND_ORDER.index(stage) > ROUND_ORDER.index(states[team]["round_reached"]):
+            states[team]["round_reached"] = stage
+
+    # Winning a knockout match means you've reached the next round.
+    next_round = {"R32": "R16", "R16": "QF", "QF": "SF", "SF": "Final", "Final": "Winner"}
+
     for ev in events:
         home, away, stage = ev["home"], ev["away"], ev["stage"]
+        if stage not in ROUND_ORDER:
+            continue
         _ensure(home)
         _ensure(away)
 
-        # Furthest round reached: any appearance counts.
-        for team in (home, away):
-            if not team:
-                continue
-            if ROUND_ORDER.index(stage) > ROUND_ORDER.index(states[team]["round_reached"]):
-                states[team]["round_reached"] = stage
+        # Furthest round reached: appearing in a fixture of that round counts.
+        _promote(home, stage)
+        _promote(away, stage)
 
         if not ev["finished"] or ev["home_score"] is None or ev["away_score"] is None:
             continue
@@ -224,12 +263,11 @@ def compute_team_states(events: list[dict], all_teams: list[str]) -> dict:
             else:
                 states[home]["draws"] += 1
                 states[away]["draws"] += 1
-        elif stage == "Final":
-            # Whoever wins the final is the champion. (Penalty shootouts in
-            # TheSportsDB are usually reflected in the recorded score.)
+        elif stage in next_round:
+            # The winner advances; promote them to the next round (Final winner
+            # becomes the champion). Penalty shootouts are reflected in the score.
             winner = home if hs > as_ else away if as_ > hs else None
-            if winner:
-                states[winner]["round_reached"] = "Winner"
+            _promote(winner, next_round[stage])
 
     return states
 

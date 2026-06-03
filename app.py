@@ -7,8 +7,8 @@ import streamlit as st
 
 import scoring
 
-CACHE_FILE = "results_cache.csv"
-UPDATED_FILE = "results_updated.txt"
+CACHE_FILE = "results_cache.csv"     # auto-fetched results (GitHub Action)
+RESULTS_FILE = "results.csv"         # manual results / overrides (hand-edited)
 SCHEDULE_FILE = "schedule.csv"
 
 # --- 1. STYLING & PREMIUM GRASS BACKGROUND ---
@@ -165,62 +165,50 @@ def load_expectations():
 def load_participants():
     return pd.read_csv("participants.csv")
 
-def _states_from_cache():
-    """Read the last-known team states from disk (fallback / pre-fetch)."""
-    df = pd.read_csv(CACHE_FILE)
-    states = {}
+# Results come from two committed, match-level CSVs (Home, Away, HomeScore,
+# AwayScore, Stage):
+#   • results_cache.csv — written once a day by the GitHub Action (fetch_results.py)
+#   • results.csv       — hand-edited manual entries / corrections
+# Manual entries WIN on conflict, so anything the auto-fetch misses or gets
+# wrong can always be fixed by editing results.csv. The app only reads these
+# committed files — no per-visitor API calls.
+def _read_results(path):
+    """Return {(Home, Away): row-dict} for rows that have both scores."""
+    out = {}
+    try:
+        df = pd.read_csv(path, dtype=str).fillna("")
+    except (OSError, pd.errors.EmptyDataError):
+        return out
     for _, r in df.iterrows():
-        states[r["Team"]] = {
-            "wins": int(r["wins"]), "draws": int(r["draws"]),
-            "losses": int(r["losses"]), "round_reached": r["round_reached"],
-            "gf": int(r["gf"]) if "gf" in r else 0,
-            "ga": int(r["ga"]) if "ga" in r else 0,
+        hs, as_ = str(r.get("HomeScore", "")).strip(), str(r.get("AwayScore", "")).strip()
+        if not (hs.isdigit() and as_.isdigit()):
+            continue
+        home, away = str(r["Home"]).strip(), str(r["Away"]).strip()
+        out[(home, away)] = {
+            "home": home, "away": away,
+            "home_score": int(hs), "away_score": int(as_),
+            "stage": str(r.get("Stage", "")).strip(),
         }
-    return states
+    return out
 
-def _save_states_to_cache(states):
-    rows = [
-        {"Team": t, "wins": s["wins"], "draws": s["draws"],
-         "losses": s["losses"], "round_reached": s["round_reached"],
-         "gf": s.get("gf", 0), "ga": s.get("ga", 0)}
-        for t, s in states.items()
-    ]
-    pd.DataFrame(rows).to_csv(CACHE_FILE, index=False)
-
-# Results are refreshed once a day by the GitHub Action (fetch_results.py),
-# which commits results_cache.csv. Streamlit Cloud redeploys on that commit,
-# so the app simply reads the committed cache — always <~1 day old, with no
-# per-visitor API calls. A live fetch runs only if the cache file is missing
-# (e.g. first deploy before the Action has run).
 @st.cache_data(show_spinner="Loading results…")
 def get_team_states(all_teams):
-    try:
-        states = _states_from_cache()
-        return states, "daily", _results_updated_at()
-    except Exception:  # noqa: BLE001 — no cache yet -> fetch live once
-        try:
-            events = scoring.fetch_events()
-            if not events:
-                raise ValueError("no events returned")
-            states = scoring.compute_team_states(events, all_teams)
-            _save_states_to_cache(states)
-            return states, "live", datetime.datetime.now(datetime.timezone.utc)
-        except Exception:  # noqa: BLE001 — nothing to show yet
-            empty = {t: {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0,
-                         "round_reached": "Group"} for t in all_teams}
-            return empty, "none", None
+    merged = _read_results(CACHE_FILE)        # auto first…
+    merged.update(_read_results(RESULTS_FILE))  # …then manual overrides win
+    events = scoring.build_events(list(merged.values()))
+    states = scoring.compute_team_states(events, list(all_teams))
+    source = "results" if events else "none"
+    return states, source, _results_updated_at()
 
 def _results_updated_at():
-    """When the daily fetch last ran (from the sidecar the Action commits)."""
-    try:
-        with open(UPDATED_FILE, encoding="utf-8") as fh:
-            return datetime.datetime.fromisoformat(fh.read().strip())
-    except (OSError, ValueError):
-        # Fall back to the cache file's checkout time.
+    """Most recent change to either results file (≈ last deploy on the Cloud)."""
+    times = []
+    for path in (CACHE_FILE, RESULTS_FILE):
         try:
-            return datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))
+            times.append(os.path.getmtime(path))
         except OSError:
-            return None
+            pass
+    return datetime.datetime.fromtimestamp(max(times)) if times else None
 
 # Group membership, derived once from the schedule (Stage == "Group X").
 def _derive_group_teams(schedule):
@@ -272,12 +260,10 @@ def _stamp_sgt(dt):
     return dt.astimezone(sgt).strftime("%d %b %Y, %H:%M SGT")
 
 stamp = _stamp_sgt(updated_at)
-if source == "daily":
-    st.caption(f"📅 Results refreshed daily · last updated {stamp}")
-elif source == "live":
-    st.caption(f"📡 Results fetched just now · {stamp}")
+if source == "results":
+    st.caption(f"📅 Results update daily · last updated {stamp}")
 else:
-    st.caption("⚠️ No results available yet — the daily refresh hasn't run successfully.")
+    st.caption("⏳ No matches played yet — standings will appear once results come in.")
 
 tabs = st.tabs(["🥇 Leaderboard", "📊 Market Tiers", "📈 Group Rankings", "📅 SGT Schedule", "🌳 Knockout Draw"])
 
