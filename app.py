@@ -160,6 +160,22 @@ def load_schedule():
 
 SGT_SCHEDULE = load_schedule()
 
+# Group membership, derived from the schedule (Stage == "Group X"). Needed by
+# the results pipeline (group qualification) and the standings display.
+def _derive_group_teams(schedule):
+    groups: dict[str, set] = {}
+    for m in schedule:
+        stage = m["Stage"]
+        if not stage.startswith("Group "):
+            continue
+        group = stage.split(" ", 1)[1]  # "A", "B", …
+        parts = m["Match"].split(" vs ")
+        if len(parts) == 2:
+            groups.setdefault(group, set()).update(p.strip() for p in parts)
+    return groups
+
+GROUP_TEAMS = _derive_group_teams(SGT_SCHEDULE)
+
 # --- 3. DATA LOADING ---
 def load_expectations():
     df = pd.read_csv("team_expectations.csv")
@@ -198,7 +214,7 @@ def get_team_states(all_teams):
     merged = _read_results(CACHE_FILE)        # auto first…
     merged.update(_read_results(RESULTS_FILE))  # …then manual overrides win
     events = scoring.build_events(list(merged.values()))
-    states = scoring.compute_team_states(events, list(all_teams))
+    states = scoring.compute_team_states(events, list(all_teams), GROUP_TEAMS)
     source = "results" if events else "none"
     return states, source, _results_updated_at()
 
@@ -211,21 +227,6 @@ def _results_updated_at():
         except OSError:
             pass
     return datetime.datetime.fromtimestamp(max(times)) if times else None
-
-# Group membership, derived once from the schedule (Stage == "Group X").
-def _derive_group_teams(schedule):
-    groups: dict[str, set] = {}
-    for m in schedule:
-        stage = m["Stage"]
-        if not stage.startswith("Group "):
-            continue
-        group = stage.split(" ", 1)[1]  # "A", "B", …
-        parts = m["Match"].split(" vs ")
-        if len(parts) == 2:
-            groups.setdefault(group, set()).update(p.strip() for p in parts)
-    return groups
-
-GROUP_TEAMS = _derive_group_teams(SGT_SCHEDULE)
 
 # Single source of truth = the teams that actually appear in the schedule.
 # Warn (don't crash) if the flag/ranking/tier tables drift out of sync with it.

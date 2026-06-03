@@ -210,21 +210,24 @@ def build_events(results: list[dict]) -> list[dict]:
 
 # --- Deriving team states ---------------------------------------------------
 
-def compute_team_states(events: list[dict], all_teams: list[str]) -> dict:
-    """From a list of events, derive per-team group record and furthest round.
+def compute_team_states(events: list[dict], all_teams: list[str], group_teams: dict | None = None) -> dict:
+    """From completed match results, derive per-team state.
 
-    Returns {team: {"wins", "draws", "losses", "round_reached"}}.
-    A team "reaches" a knockout round if it appears in a fixture of that round
-    (played or scheduled). The final's winner is promoted to "Winner".
+    Returns {team: {"wins", "draws", "losses", "gf", "ga", "round_reached",
+    "done"}}. "done" is True once a team's run is decided (eliminated or
+    champion), which is what lets scoring lock in a progression result instead
+    of assuming an outcome. `group_teams` ({letter: {teams}}) enables group
+    qualification — without it, group placings can't be resolved.
     """
-    states = {
-        t: {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0, "round_reached": "Group"}
-        for t in all_teams
-    }
+    def _blank():
+        return {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0,
+                "round_reached": "Group", "done": False}
+
+    states = {t: _blank() for t in all_teams}
 
     def _ensure(team):
         if team and team not in states:
-            states[team] = {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0, "round_reached": "Group"}
+            states[team] = _blank()
 
     def _promote(team, stage):
         if team and ROUND_ORDER.index(stage) > ROUND_ORDER.index(states[team]["round_reached"]):
@@ -264,12 +267,59 @@ def compute_team_states(events: list[dict], all_teams: list[str]) -> dict:
                 states[home]["draws"] += 1
                 states[away]["draws"] += 1
         elif stage in next_round:
-            # The winner advances; promote them to the next round (Final winner
-            # becomes the champion). Penalty shootouts are reflected in the score.
+            # The winner advances; the loser is out. The Final winner is champion.
             winner = home if hs > as_ else away if as_ > hs else None
+            loser = (away if winner == home else home) if winner else None
             _promote(winner, next_round[stage])
+            if loser:
+                states[loser]["done"] = True          # knocked out
+            if stage == "Final" and winner:
+                states[winner]["done"] = True          # champion
+
+    if group_teams:
+        _resolve_group_qualification(states, group_teams, _promote)
 
     return states
+
+
+def _group_rank_key(s):
+    """Group ranking: points, then goal difference, then goals for."""
+    return (3 * s["wins"] + s["draws"], s["gf"] - s["ga"], s["gf"])
+
+
+def _resolve_group_qualification(states, group_teams, promote):
+    """Once groups finish, mark non-qualifiers done and advance qualifiers.
+
+    Top two of each completed group go through; the eight best third-placed
+    teams (decided only once every group is complete) join them. Anyone else
+    whose group is complete is out. Tie-breaks use points/GD/GF (the head-to-
+    head and fair-play tie-breaks beyond that are rare and not modelled).
+    """
+    def played(t):
+        s = states[t]
+        return s["wins"] + s["draws"] + s["losses"]
+
+    complete = {g: all(played(t) == 3 for t in teams) for g, teams in group_teams.items()}
+    all_complete = all(complete.values())
+    thirds = []
+
+    for g, teams in group_teams.items():
+        if not complete[g]:
+            continue
+        ordered = sorted(teams, key=lambda t: _group_rank_key(states[t]), reverse=True)
+        for t in ordered[:2]:               # top two qualify
+            promote(t, "R32")
+        for t in ordered[3:]:               # 4th (and beyond) are out
+            states[t]["done"] = True
+        if len(ordered) >= 3:
+            thirds.append(ordered[2])       # third place — fate pending
+
+    if all_complete and thirds:
+        ranked_thirds = sorted(thirds, key=lambda t: _group_rank_key(states[t]), reverse=True)
+        for t in ranked_thirds[:8]:         # eight best thirds qualify
+            promote(t, "R32")
+        for t in ranked_thirds[8:]:
+            states[t]["done"] = True
 
 
 # --- Scoring ----------------------------------------------------------------
@@ -279,11 +329,18 @@ def score_pick(team: str, position: str, expectations: dict, state: dict) -> dic
     exp = expectations.get(team, 0)
     round_reached = state["round_reached"]
     is_short = str(position).strip().lower() == "short"
+    done = state.get("done", False)
 
-    # Progression: Long profits when the team beats its expectation; Short is
-    # the inverse (profits when they fall short).
+    # Progression only reflects what's actually decided, never an assumed
+    # group-stage exit. `achieved` is the furthest round confirmed by completed
+    # results. While a team is still alive we credit confirmed *over*-
+    # performance but don't yet apply the shortfall (the outcome is unknown);
+    # once the team is eliminated or wins, the full gap locks in.
     achieved = ROUND_POINTS.get(round_reached, 0)
-    progression = (exp - achieved) if is_short else (achieved - exp)
+    if is_short:
+        progression = (exp - achieved) if done else min(exp - achieved, 0)
+    else:
+        progression = (achieved - exp) if done else max(achieved - exp, 0)
 
     # Group points: Long rewards wins (3/1/0); Short mirrors it, rewarding
     # losses instead (loss 3, draw 1, win 0) so shorting a team that loses is
@@ -320,7 +377,8 @@ def compute_scores(participants_df, expectations: dict, states: dict) -> dict:
     total descending.
     """
     players = []
-    default_state = {"wins": 0, "draws": 0, "losses": 0, "round_reached": "Group"}
+    default_state = {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0,
+                     "round_reached": "Group", "done": False}
 
     for _, row in participants_df.iterrows():
         picks = []
