@@ -6,9 +6,12 @@ source (TheSportsDB) once a day, derives each team's group-stage record and
 the furthest knockout round it reached, and turns that into player scores.
 
 Scoring rules (per pick):
-  progression = ROUND_POINTS[round_reached] - team_expectation
-  league      = 3*wins + 1*draws + 0*losses          (group stage only)
-  If the pick is SHORT, both components are negated.
+  LONG:
+    progression = ROUND_POINTS[round_reached] - team_expectation
+    league      = 3*wins + 1*draws + 0*losses        (group stage only)
+  SHORT (mirror image — profits when the team underperforms):
+    progression = team_expectation - ROUND_POINTS[round_reached]
+    league      = 3*losses + 1*draws + 0*wins        (group stage only)
   contribution = progression + league
 A player's total is the sum of their three picks.
 """
@@ -237,17 +240,28 @@ def score_pick(team: str, position: str, expectations: dict, state: dict) -> dic
     """Score a single pick. Returns the component breakdown and total."""
     exp = expectations.get(team, 0)
     round_reached = state["round_reached"]
-    progression = ROUND_POINTS.get(round_reached, 0) - exp
-    league = (
-        LEAGUE_POINTS["win"] * state["wins"]
-        + LEAGUE_POINTS["draw"] * state["draws"]
-        + LEAGUE_POINTS["loss"] * state["losses"]
-    )
-
     is_short = str(position).strip().lower() == "short"
+
+    # Progression: Long profits when the team beats its expectation; Short is
+    # the inverse (profits when they fall short).
+    achieved = ROUND_POINTS.get(round_reached, 0)
+    progression = (exp - achieved) if is_short else (achieved - exp)
+
+    # Group points: Long rewards wins (3/1/0); Short mirrors it, rewarding
+    # losses instead (loss 3, draw 1, win 0) so shorting a team that loses is
+    # rewarded rather than merely neutral.
     if is_short:
-        progression = -progression
-        league = -league
+        league = (
+            LEAGUE_POINTS["win"] * state["losses"]   # 3 per loss
+            + LEAGUE_POINTS["draw"] * state["draws"]  # 1 per draw
+            + LEAGUE_POINTS["loss"] * state["wins"]   # 0 per win
+        )
+    else:
+        league = (
+            LEAGUE_POINTS["win"] * state["wins"]
+            + LEAGUE_POINTS["draw"] * state["draws"]
+            + LEAGUE_POINTS["loss"] * state["losses"]
+        )
 
     return {
         "team": team,

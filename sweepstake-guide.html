@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RMD World Cup 2026 Sweepstake — How It Works</title>
+<style>
+  :root {
+    --pitch: #0b6b3a;
+    --pitch-dark: #084f2b;
+    --gold: #E8B400;
+    --blue: #4A90D9;
+    --grey: #95A5A6;
+    --ink: #1f2933;
+    --soft: #f4f6f8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: linear-gradient(135deg, #0b6b3a 0%, #084f2b 100%);
+    padding: 24px 12px;
+    line-height: 1.55;
+  }
+  .card {
+    max-width: 760px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+  }
+  /* Hero */
+  .hero {
+    background: radial-gradient(circle at 20% 20%, #0d7d44, #084f2b);
+    color: #fff;
+    padding: 40px 32px 34px;
+    position: relative;
+    text-align: center;
+  }
+  .hero::after {
+    content: "";
+    position: absolute; left: 0; right: 0; bottom: 0; height: 6px;
+    background: linear-gradient(90deg, var(--gold), #fff3c4, var(--gold));
+  }
+  .hero .trophy { font-size: 52px; line-height: 1; }
+  .hero h1 { margin: 10px 0 4px; font-size: 30px; letter-spacing: -0.5px; }
+  .hero p { margin: 0; opacity: 0.9; font-size: 16px; }
+  .content { padding: 32px; }
+  h2 {
+    font-size: 21px; margin: 34px 0 14px; padding-bottom: 8px;
+    border-bottom: 3px solid var(--soft);
+  }
+  h2:first-child { margin-top: 0; }
+  .step {
+    display: flex; gap: 14px; align-items: flex-start; margin: 16px 0;
+  }
+  .num {
+    flex: 0 0 32px; height: 32px; border-radius: 50%;
+    background: var(--pitch); color: #fff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+  }
+  .step div p { margin: 0; }
+  .pill {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; color: #fff;
+  }
+  .pill.long { background: #2e9e5b; }
+  .pill.short { background: #d9534f; }
+
+  /* Tier cards */
+  .tier {
+    border-left: 12px solid; border-radius: 10px; background: var(--soft);
+    padding: 14px 18px; margin: 12px 0;
+  }
+  .tier h3 { margin: 0 0 6px; font-size: 17px; }
+  .tier .exp { font-size: 13px; font-weight: 700; color: #fff; padding: 2px 9px; border-radius: 999px; }
+  .tier .teams { font-size: 14px; color: #46535f; margin-top: 6px; }
+  .tier.sc { border-color: var(--gold); }
+  .tier.sc .exp { background: var(--gold); color: #3a2c00; }
+  .tier.dh { border-color: var(--blue); }
+  .tier.dh .exp { background: var(--blue); }
+  .tier.h  { border-color: var(--grey); }
+  .tier.h .exp { background: var(--grey); }
+
+  /* Points table */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  th, td { padding: 9px 10px; text-align: center; border-bottom: 1px solid #eceff1; }
+  th:first-child, td:first-child { text-align: left; font-weight: 600; }
+  thead th { background: var(--pitch); color: #fff; }
+  thead th:first-child { background: var(--pitch-dark); }
+  .pos { color: #1f8b4c; font-weight: 700; }
+  .neg { color: #c0392b; font-weight: 700; }
+  .zero { color: #90a4ae; }
+  .table-wrap { overflow-x: auto; }
+
+  /* Example boxes */
+  .example {
+    background: var(--soft); border-radius: 12px; padding: 16px 18px; margin: 14px 0;
+    border-left: 5px solid var(--pitch);
+  }
+  .example b { color: var(--pitch-dark); }
+  .calc { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: #fff; padding: 8px 12px; border-radius: 8px; display: inline-block; margin-top: 8px; }
+  .formula { background: var(--soft); border-radius: 12px; padding: 8px 18px; margin: 14px 0; }
+  .formula div { padding: 9px 0; font-size: 15px; display: flex; align-items: center; gap: 12px; }
+  .formula div + div { border-top: 1px solid #e3e8ec; }
+  .formula code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+
+  .footer {
+    text-align: center; padding: 22px; color: #fff; font-size: 13px; opacity: 0.85;
+  }
+  @media (max-width: 520px) {
+    .content { padding: 22px; }
+    .hero h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="hero">
+      <div class="trophy">🏆</div>
+      <h1>RMD World Cup 2026 Sweepstake</h1>
+      <p>Build your portfolio. Back the brave. Outscore the rest.</p>
+    </div>
+
+    <div class="content">
+
+      <h2>🎯 The idea</h2>
+      <p>Every team has a <b>tier expectation</b> — how far they're expected to go.
+      You score points by <b>beating that expectation</b>, and lose points by <b>falling short of it</b>.
+      The favourites aren't always the smart pick — sometimes the points are in backing an underdog, or betting against a big name.</p>
+
+      <h2>📝 Your picks</h2>
+      <div class="step"><div class="num">1</div><div><p>Pick <b>3 teams</b>. That's your portfolio for the tournament.</p></div></div>
+      <div class="step"><div class="num">2</div><div><p>For each team, choose a position:</p>
+        <p style="margin-top:6px">
+          <span class="pill long">LONG 📈</span> — you back them to <b>exceed</b> their expectation.<br>
+          <span class="pill short">SHORT 📉</span> — you back them to <b>disappoint</b>, finishing below their expectation.
+        </p></div></div>
+      <div class="step"><div class="num">3</div><div><p>Your total score = the points from all three picks added together. Highest score wins. 🥇</p></div></div>
+
+      <h2>🏟️ The tiers</h2>
+      <p>A team's tier sets its starting <b>expectation</b> (in points). The higher the tier, the more they're expected to achieve — so the harder they are to impress with.</p>
+
+      <div class="tier sc">
+        <h3>Serious Contenders <span class="exp">Expectation: 35</span></h3>
+        <div class="teams">France · Spain · Argentina · Brazil · England · Germany · Portugal · Netherlands</div>
+      </div>
+      <div class="tier dh">
+        <h3>Dark Horses <span class="exp">Expectation: 15</span></h3>
+        <div class="teams">Belgium · Morocco · Colombia · Uruguay · Croatia · Senegal · Japan · USA · Mexico · Türkiye · South Korea · Switzerland · Norway</div>
+      </div>
+      <div class="tier h">
+        <h3>Hopefuls <span class="exp">Expectation: 0</span></h3>
+        <div class="teams">Ecuador · Austria · Australia · Ghana · South Africa · Czechia · Bosnia · Scotland · Paraguay · Qatar · Canada · Haiti · Curaçao · Ivory Coast · Sweden · Tunisia · Cape Verde · Saudi Arabia · Iran · New Zealand · Egypt · Iraq · Algeria · Jordan · DR Congo · Uzbekistan · Panama</div>
+      </div>
+
+      <h2>📊 How points are scored</h2>
+      <p>Each pick earns two kinds of points, added together.</p>
+
+      <p><b>1. Progression points.</b> Every stage a team reaches is worth a <b>progression score</b> — the further they go, the higher it climbs:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Team reaches…</th><th>Progression score</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Group stage only</td><td>0</td></tr>
+          <tr><td>Round of 32</td><td>8</td></tr>
+          <tr><td>Round of 16</td><td>18</td></tr>
+          <tr><td>Quarter-Final</td><td>32</td></tr>
+          <tr><td>Semi-Final</td><td>48</td></tr>
+          <tr><td>Runner-up</td><td>65</td></tr>
+          <tr><td>🏆 Champion</td><td>85</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p style="margin-top:16px">Your points are that score measured against the team's <b>expectation</b>
+      (its tier value — Serious Contenders <b>35</b>, Dark Horses <b>15</b>, Hopefuls <b>0</b>):</p>
+
+      <div class="formula">
+        <div><span class="pill long">LONG 📈</span> <code>progression score − expectation</code></div>
+        <div><span class="pill short">SHORT 📉</span> <code>expectation − progression score</code></div>
+      </div>
+
+      <p>So a <b>Long</b> pick profits when the team goes <b>further</b> than expected, and a
+      <b>Short</b> pick profits when they <b>fall short</b> of it.</p>
+
+      <p style="margin-top:18px"><b>2. Group-stage points</b> — added on top, from the group games only.
+      A <b>Long</b> pick wants results; a <b>Short</b> pick wants the opposite:</p>
+
+      <div class="formula">
+        <div><span class="pill long">LONG 📈</span> <code>+3 win &nbsp; +1 draw &nbsp; 0 loss</code></div>
+        <div><span class="pill short">SHORT 📉</span> <code>+3 loss &nbsp; +1 draw &nbsp; 0 win</code></div>
+      </div>
+
+      <h2>💡 Worked examples</h2>
+      <div class="example">
+        <b>Going Long on a favourite</b> — you pick <b>Spain (Serious Contender, expectation 35)</b> as <span class="pill long">LONG</span>.<br>
+        They win 2 and draw 1 in the group, then reach the <b>Semi-Final</b> (progression score 48).
+        <span class="calc">Progression: 48 − 35 = +13 &nbsp;·&nbsp; Group: (2×3)+(1×1) = +7 &nbsp;→&nbsp; <b>+20 pts</b></span>
+      </div>
+      <div class="example">
+        <b>Shorting a big team that flops</b> — you pick <b>Germany (Serious Contender, expectation 35)</b> as <span class="pill short">SHORT</span>.<br>
+        They win once and lose twice, crashing out in the <b>group stage</b> (progression score 0).
+        <span class="calc">Progression: 35 − 0 = +35 &nbsp;·&nbsp; Group: 2 losses × 3 = +6 &nbsp;→&nbsp; <b>+41 pts</b></span>
+      </div>
+
+    </div>
+  </div>
+  <div class="footer">Good luck — may your Short on the favourites pay off. ⚽</div>
+</body>
+</html>
