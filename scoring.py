@@ -288,4 +288,4 @@ def compute_scores(participants_df, expectations: dict, states: dict) -> dict:
         )
 
     players.sort(key=lambda p: p["total"], reverse=True)
-    return {"players": players, "computed_at": _dt.datetime.utcnow().isoformat()}
+    return {"players": players, "computed_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
