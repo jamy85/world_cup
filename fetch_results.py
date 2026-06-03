@@ -30,9 +30,16 @@ def _all_teams():
 def main():
     all_teams = _all_teams()
 
+    # fetch_events() raises on a real network/HTTP failure (→ exit 1 below).
+    # An empty result just means no playable data yet — that's a clean no-op,
+    # not a failure, so the daily job shouldn't go red before the tournament.
     events = scoring.fetch_events()
-    if not events:
-        raise SystemExit("No events returned from the data source — leaving cache untouched.")
+    finished = [e for e in events if e.get("finished")]
+    if not finished:
+        print("No completed matches found yet — leaving the cache untouched. "
+              "(Expected before kick-off; if matches have already been played, "
+              "the data source may be incomplete or unstructured.)")
+        return
 
     states = scoring.compute_team_states(events, all_teams)
 
