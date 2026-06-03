@@ -145,10 +145,15 @@ ROUND_LABELS = {
     "QF": "Quarter-Final", "SF": "Semi-Final", "Final": "Runner-up", "Winner": "🏆 Champion",
 }
 
+# NOTE: the CSV loaders below are intentionally NOT cached with
+# @st.cache_data. The files are tiny, and caching them means an edit (a new
+# participant, a manual result) wouldn't show until the app process restarts —
+# a confusing "I changed the file but nothing happened" trap. Reading them
+# fresh each rerun costs microseconds and makes edits appear on a refresh.
+
 # Full 104-match SGT (GMT+8) schedule lives in schedule.csv. The "No" column
 # holds the official FIFA match number (M73–M104) for knockout fixtures so the
 # bracket references (e.g. "W(M74) vs W(M77)") stay anchored to it.
-@st.cache_data
 def load_schedule():
     df = pd.read_csv(SCHEDULE_FILE, dtype=str).fillna("")
     return df.to_dict("records")
@@ -156,12 +161,10 @@ def load_schedule():
 SGT_SCHEDULE = load_schedule()
 
 # --- 3. DATA LOADING ---
-@st.cache_data
 def load_expectations():
     df = pd.read_csv("team_expectations.csv")
     return df.set_index("Team")["Expectation"].to_dict()
 
-@st.cache_data
 def load_participants():
     return pd.read_csv("participants.csv")
 
@@ -191,7 +194,6 @@ def _read_results(path):
         }
     return out
 
-@st.cache_data(show_spinner="Loading results…")
 def get_team_states(all_teams):
     merged = _read_results(CACHE_FILE)        # auto first…
     merged.update(_read_results(RESULTS_FILE))  # …then manual overrides win
