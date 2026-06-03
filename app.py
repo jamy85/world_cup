@@ -8,6 +8,7 @@ import streamlit as st
 import scoring
 
 CACHE_FILE = "results_cache.csv"
+UPDATED_FILE = "results_updated.txt"
 SCHEDULE_FILE = "schedule.csv"
 
 # --- 1. STYLING & PREMIUM GRASS BACKGROUND ---
@@ -186,26 +187,40 @@ def _save_states_to_cache(states):
     ]
     pd.DataFrame(rows).to_csv(CACHE_FILE, index=False)
 
-# Fetch live results at most once per day (24h cache). Live failures fall back
-# to the on-disk cache so the leaderboard always renders.
-@st.cache_data(ttl=60 * 60 * 24, show_spinner="Fetching latest results…")
+# Results are refreshed once a day by the GitHub Action (fetch_results.py),
+# which commits results_cache.csv. Streamlit Cloud redeploys on that commit,
+# so the app simply reads the committed cache — always <~1 day old, with no
+# per-visitor API calls. A live fetch runs only if the cache file is missing
+# (e.g. first deploy before the Action has run).
+@st.cache_data(show_spinner="Loading results…")
 def get_team_states(all_teams):
     try:
-        events = scoring.fetch_events()
-        if not events:
-            raise ValueError("no events returned")
-        states = scoring.compute_team_states(events, all_teams)
-        _save_states_to_cache(states)
-        return states, "live", datetime.datetime.now()
-    except Exception:  # noqa: BLE001 — any failure -> use cached results
         states = _states_from_cache()
-        return states, "cache", _cache_mtime()
+        return states, "daily", _results_updated_at()
+    except Exception:  # noqa: BLE001 — no cache yet -> fetch live once
+        try:
+            events = scoring.fetch_events()
+            if not events:
+                raise ValueError("no events returned")
+            states = scoring.compute_team_states(events, all_teams)
+            _save_states_to_cache(states)
+            return states, "live", datetime.datetime.now(datetime.timezone.utc)
+        except Exception:  # noqa: BLE001 — nothing to show yet
+            empty = {t: {"wins": 0, "draws": 0, "losses": 0, "gf": 0, "ga": 0,
+                         "round_reached": "Group"} for t in all_teams}
+            return empty, "none", None
 
-def _cache_mtime():
+def _results_updated_at():
+    """When the daily fetch last ran (from the sidecar the Action commits)."""
     try:
-        return datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))
-    except OSError:
-        return None
+        with open(UPDATED_FILE, encoding="utf-8") as fh:
+            return datetime.datetime.fromisoformat(fh.read().strip())
+    except (OSError, ValueError):
+        # Fall back to the cache file's checkout time.
+        try:
+            return datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))
+        except OSError:
+            return None
 
 # Group membership, derived once from the schedule (Stage == "Group X").
 def _derive_group_teams(schedule):
@@ -248,11 +263,21 @@ scores = scoring.compute_scores(participants, expectations, states)
 # --- 4. UI TABS ---
 st.title("🏆 RMD World Cup 2026 Sweepstake")
 
-stamp = updated_at.strftime("%d %b %Y, %H:%M") if updated_at else "unknown"
-if source == "live":
-    st.caption(f"📡 Results updated live · {stamp} · refreshes once a day")
+def _stamp_sgt(dt):
+    if dt is None:
+        return "unknown"
+    sgt = datetime.timezone(datetime.timedelta(hours=8))
+    if dt.tzinfo is None:                      # mtime fallback is naive UTC on the server
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(sgt).strftime("%d %b %Y, %H:%M SGT")
+
+stamp = _stamp_sgt(updated_at)
+if source == "daily":
+    st.caption(f"📅 Results refreshed daily · last updated {stamp}")
+elif source == "live":
+    st.caption(f"📡 Results fetched just now · {stamp}")
 else:
-    st.caption(f"💾 Showing last saved results · {stamp} · live fetch unavailable, will retry")
+    st.caption("⚠️ No results available yet — the daily refresh hasn't run successfully.")
 
 tabs = st.tabs(["🥇 Leaderboard", "📊 Market Tiers", "📈 Group Rankings", "📅 SGT Schedule", "🌳 Knockout Draw"])
 
