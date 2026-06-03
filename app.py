@@ -36,8 +36,51 @@ st.markdown("""
     .country-item img { border: 1px solid #eee; border-radius: 3px; flex-shrink: 0; }
     .country-item span { white-space: nowrap; }
     .country-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+    /* Static HTML tables — avoid Streamlit's interactive grid (ResizeObserver
+       loop / React #185) that flickers scrollbars on resize. The wrapper gives
+       a plain CSS horizontal scrollbar for wide tables without that bug. */
+    .wc-table-wrap { overflow-x: auto; width: 100%; }
+    .wc-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .wc-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid #e0e0e0; font-weight: 600; background: #f7f7f7; white-space: nowrap; }
+    .wc-table td { padding: 6px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    .wc-table tr:last-child td { border-bottom: none; }
+    .wc-table img { vertical-align: middle; border: 1px solid #eee; border-radius: 3px; }
+    .wc-num { text-align: right; font-variant-numeric: tabular-nums; }
     </style>
     """, unsafe_allow_html=True)
+
+def render_table(df, image_cols=(), num_cols=None):
+    """Render a DataFrame as a static HTML table inside a scrollable wrapper.
+
+    Static markup sidesteps st.dataframe's interactive grid, whose
+    ResizeObserver loop flickers scrollbars and can throw React error #185
+    when a table is wider than its container.
+    """
+    if num_cols is None:
+        num_cols = [c for c in df.columns
+                    if c not in image_cols and pd.api.types.is_numeric_dtype(df[c])]
+    num_cols = set(num_cols)
+    image_cols = set(image_cols)
+
+    head = "".join(f"<th class='{'wc-num' if c in num_cols else ''}'>{c}</th>" for c in df.columns)
+    body = []
+    for _, row in df.iterrows():
+        cells = []
+        for c in df.columns:
+            v = row[c]
+            if c in image_cols:
+                inner = f"<img src='{v}' width='28'>" if v else ""
+            else:
+                inner = "" if pd.isna(v) else str(v)
+            cells.append(f"<td class='{'wc-num' if c in num_cols else ''}'>{inner}</td>")
+        body.append("<tr>" + "".join(cells) + "</tr>")
+
+    html = (
+        "<div class='wc-table-wrap'><table class='wc-table'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 # --- 2. FLAGS & TIERS ---
 # ISO flag codes (flagcdn) for every World Cup nation.
@@ -224,7 +267,7 @@ with tabs[0]:
             row[f"Pts {j + 1}"] = pick["total"] if pick else 0
         board_rows.append(row)
     board = pd.DataFrame(board_rows)
-    st.dataframe(board, hide_index=True, use_container_width=True, height=38 + len(board) * 35)
+    render_table(board)
 
     st.divider()
     st.subheader("🔍 Portfolio breakdowns")
@@ -270,7 +313,7 @@ with tabs[1]:
         stage_rows.append(row)
 
     stage_df = pd.DataFrame(stage_rows)
-    st.dataframe(stage_df, hide_index=True, use_container_width=True, height=38 + len(stage_df) * 35)
+    render_table(stage_df)
 
 with tabs[2]:
     st.header("Group Stage Standings")
@@ -295,11 +338,7 @@ with tabs[2]:
             grp_df = pd.DataFrame(rows).sort_values(["Pts", "GD", "W"], ascending=False)
             with col:
                 st.subheader(f"Group {grp}")
-                st.dataframe(
-                    grp_df,
-                    hide_index=True, use_container_width=True,
-                    height=38 + len(grp_df) * 35,
-                )
+                render_table(grp_df)
 
 with tabs[3]:
     st.header("Singapore Time Schedule")
@@ -323,16 +362,13 @@ with tabs[3]:
         return get_flag(parts[idx].strip()) if len(parts) > idx else ""
 
     filtered = filtered.copy()
-    filtered["Flag 1"] = filtered.apply(lambda r: _flag_safe(r["Match"], r["Stage"], 0), axis=1)
-    filtered["Flag 2"] = filtered.apply(lambda r: _flag_safe(r["Match"], r["Stage"], 1), axis=1)
+    # Single vs double space → distinct column keys that both render as blank headers.
+    filtered[" "] = filtered.apply(lambda r: _flag_safe(r["Match"], r["Stage"], 0), axis=1)
+    filtered["  "] = filtered.apply(lambda r: _flag_safe(r["Match"], r["Stage"], 1), axis=1)
 
-    st.dataframe(
-        filtered[["Date", "SGT Time", "Flag 1", "Match", "Flag 2", "Stage"]],
-        column_config={
-            "Flag 1": st.column_config.ImageColumn(" "),
-            "Flag 2": st.column_config.ImageColumn(" "),
-        },
-        hide_index=True, use_container_width=True, height=38 + len(filtered) * 35,
+    render_table(
+        filtered[["Date", "SGT Time", " ", "Match", "  ", "Stage"]],
+        image_cols=(" ", "  "),
     )
 
 with tabs[4]:
