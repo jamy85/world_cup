@@ -2,8 +2,9 @@
 
 Fetches World Cup 2026 scorelines from TheSportsDB and writes them to
 results_cache.csv as match-level rows (Home, Away, HomeScore, AwayScore,
-Stage). The app merges this with the hand-editable results.csv (manual entries
-win) and derives standings from there.
+Stage, Date — the match's ISO date). The app merges this with the
+hand-editable results.csv (manual entries win) and derives standings from
+there.
 
 Because TheSportsDB leaves the stage/group fields empty for this tournament,
 each played match is matched against our own schedule.csv (which knows the
@@ -24,7 +25,7 @@ import scoring
 CACHE_FILE = "results_cache.csv"
 SCHEDULE_FILE = "schedule.csv"
 EXPECTATIONS_FILE = "team_expectations.csv"
-COLUMNS = ["Home", "Away", "HomeScore", "AwayScore", "Stage"]
+COLUMNS = ["Home", "Away", "HomeScore", "AwayScore", "Stage", "Date"]
 
 # Best-effort matchday → knockout stage (48-team format: 3 group rounds first).
 ROUND_TO_STAGE = {4: "R32", 5: "R16", 6: "QF", 7: "SF", 8: "Final"}
@@ -53,6 +54,7 @@ def _match_row(ev, groups):
         return None
 
     rnd = ev["round"]
+    date = ev.get("date", "")                 # ISO match date (dateEvent)
     pair = frozenset((home, away))
     # The matchday number decides group-vs-knockout first (rounds 1–3 are the
     # group stage). This matters when two teams who met in the group are drawn
@@ -64,12 +66,12 @@ def _match_row(ev, groups):
             sched_home, sched_away = groups[pair]
             if home != sched_home:
                 home, away, hs, as_ = away, home, as_, hs
-            return {"Home": sched_home, "Away": sched_away, "HomeScore": hs, "AwayScore": as_, "Stage": "Group"}
-        return {"Home": home, "Away": away, "HomeScore": hs, "AwayScore": as_, "Stage": "Group"}
+            return {"Home": sched_home, "Away": sched_away, "HomeScore": hs, "AwayScore": as_, "Stage": "Group", "Date": date}
+        return {"Home": home, "Away": away, "HomeScore": hs, "AwayScore": as_, "Stage": "Group", "Date": date}
 
     stage = ROUND_TO_STAGE.get(rnd)           # knockout best-effort
     if stage:
-        return {"Home": home, "Away": away, "HomeScore": hs, "AwayScore": as_, "Stage": stage}
+        return {"Home": home, "Away": away, "HomeScore": hs, "AwayScore": as_, "Stage": stage, "Date": date}
     return None
 
 
