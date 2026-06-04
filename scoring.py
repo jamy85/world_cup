@@ -177,6 +177,7 @@ def fetch_events() -> list[dict]:
                 "home_score": int(hs) if str(hs).strip().isdigit() else None,
                 "away_score": int(as_) if str(as_).strip().isdigit() else None,
                 "round": int(rnd) if str(rnd).strip().isdigit() else None,
+                "date": str(ev.get("dateEvent", "")).strip(),  # ISO, e.g. 2026-07-06
                 "finished": bool(finished),
             }
         )
@@ -370,6 +371,20 @@ def score_pick(team: str, position: str, expectations: dict, state: dict) -> dic
     }
 
 
+def _parse_date(value):
+    """Parse a results-CSV Date cell. Accepts ISO (2026-07-06, what the fetcher
+    writes) or the schedule's '06 Jul 2026' style. Blank/unknown -> None."""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%d %b %Y", "%d %B %Y"):
+        try:
+            return _dt.datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 # Schedule "Stage" text -> our ROUND_ORDER key, for dating knockout results.
 _SCHED_STAGE_KEY = {
     "Round of 32": "R32", "Round of 16": "R16",
@@ -416,12 +431,18 @@ def compute_score_timeline(results: list[dict], participants_df, expectations: d
     leading zero baseline so every line starts at 0. For each date the score is
     recomputed from all results up to and including that day, so the final point
     matches the live leaderboard. Results that can't be dated are skipped.
+
+    A result's own Date wins when present (exact day, incl. knockouts); failing
+    that we fall back to the schedule (group fixtures by team pair, knockout
+    rounds by the round's final scheduled date).
     """
     group_dates, stage_last = _schedule_date_maps(schedule)
 
     dated = []
     for r in results:
-        d = group_dates.get((r.get("home"), r.get("away")))
+        d = _parse_date(r.get("date"))
+        if d is None:
+            d = group_dates.get((r.get("home"), r.get("away")))
         if d is None:
             d = stage_last.get(r.get("stage"))
         if d is not None:

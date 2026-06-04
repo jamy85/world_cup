@@ -185,12 +185,15 @@ def load_participants():
     return pd.read_csv("participants.csv")
 
 # Results come from two committed, match-level CSVs (Home, Away, HomeScore,
-# AwayScore, Stage):
+# AwayScore, Stage, Date):
 #   • results_cache.csv — written once a day by the GitHub Action (fetch_results.py)
 #   • results.csv       — hand-edited manual entries / corrections
 # Manual entries WIN on conflict, so anything the auto-fetch misses or gets
 # wrong can always be fixed by editing results.csv. The app only reads these
-# committed files — no per-visitor API calls.
+# committed files — no per-visitor API calls. Date is optional: when present it
+# fixes a match to its exact day on the score-over-time chart (used for
+# knockouts, which the schedule can't date by team); blank falls back to the
+# schedule. Group rows in results.csv are pre-filled with their schedule dates.
 def _read_results(path):
     """Return {(Home, Away): row-dict} for rows that have both scores."""
     out = {}
@@ -207,6 +210,7 @@ def _read_results(path):
             "home": home, "away": away,
             "home_score": int(hs), "away_score": int(as_),
             "stage": str(r.get("Stage", "")).strip(),
+            "date": str(r.get("Date", "")).strip(),  # optional; blank -> schedule fallback
         }
     return out
 
