@@ -370,6 +370,80 @@ def score_pick(team: str, position: str, expectations: dict, state: dict) -> dic
     }
 
 
+# Schedule "Stage" text -> our ROUND_ORDER key, for dating knockout results.
+_SCHED_STAGE_KEY = {
+    "Round of 32": "R32", "Round of 16": "R16",
+    "Quarter-Final": "QF", "Semi-Final": "SF", "Final": "Final",
+}
+
+
+def _schedule_date_maps(schedule: list[dict]):
+    """Build date lookups from schedule rows ({Date, Match, Stage}).
+
+    Returns (group_dates, stage_last):
+      group_dates: {(home, away): date} for every group fixture (both orders).
+      stage_last:  {round_key: latest scheduled date for that knockout round}.
+    Knockout fixtures list placeholder teams ("Winner A"), so individual games
+    can't be dated by team — we fall back to the round's final scheduled date.
+    """
+    group_dates: dict = {}
+    stage_last: dict = {}
+    for m in schedule:
+        try:
+            d = _dt.datetime.strptime(m["Date"], "%d %b %Y").date()
+        except (ValueError, KeyError, TypeError):
+            continue
+        stage = m.get("Stage", "")
+        if stage.startswith("Group "):
+            parts = m.get("Match", "").split(" vs ")
+            if len(parts) == 2:
+                h, a = parts[0].strip(), parts[1].strip()
+                group_dates[(h, a)] = d
+                group_dates[(a, h)] = d
+        else:
+            key = _SCHED_STAGE_KEY.get(stage)
+            if key and (stage_last.get(key) is None or d > stage_last[key]):
+                stage_last[key] = d
+    return group_dates, stage_last
+
+
+def compute_score_timeline(results: list[dict], participants_df, expectations: dict,
+                           all_teams: list[str], group_teams: dict,
+                           schedule: list[dict]) -> list[dict]:
+    """Cumulative total score per participant after each match day.
+
+    Returns chronological points [{"date": date, <player>: total, ...}], with a
+    leading zero baseline so every line starts at 0. For each date the score is
+    recomputed from all results up to and including that day, so the final point
+    matches the live leaderboard. Results that can't be dated are skipped.
+    """
+    group_dates, stage_last = _schedule_date_maps(schedule)
+
+    dated = []
+    for r in results:
+        d = group_dates.get((r.get("home"), r.get("away")))
+        if d is None:
+            d = stage_last.get(r.get("stage"))
+        if d is not None:
+            dated.append((d, r))
+    if not dated:
+        return []
+
+    dates = sorted({d for d, _ in dated})
+    timeline = []
+    for day in dates:
+        upto = [r for rd, r in dated if rd <= day]
+        states = compute_team_states(build_events(upto), list(all_teams), group_teams)
+        scored = compute_scores(participants_df, expectations, states)
+        point = {"date": day}
+        point.update({p["name"]: p["total"] for p in scored["players"]})
+        timeline.append(point)
+
+    baseline = {"date": dates[0] - _dt.timedelta(days=1)}
+    baseline.update({k: 0 for k in timeline[0] if k != "date"})
+    return [baseline] + timeline
+
+
 def compute_scores(participants_df, expectations: dict, states: dict) -> dict:
     """Score every participant.
 
