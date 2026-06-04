@@ -210,10 +210,14 @@ def _read_results(path):
         }
     return out
 
-def get_team_states(all_teams):
-    merged = _read_results(CACHE_FILE)        # auto first…
+def _merged_results():
+    """Auto-fetched results, with hand-edited results.csv overriding on conflict."""
+    merged = _read_results(CACHE_FILE)          # auto first…
     merged.update(_read_results(RESULTS_FILE))  # …then manual overrides win
-    events = scoring.build_events(list(merged.values()))
+    return list(merged.values())
+
+def get_team_states(all_teams, results):
+    events = scoring.build_events(results)
     states = scoring.compute_team_states(events, list(all_teams), GROUP_TEAMS)
     source = "results" if events else "none"
     return states, source, _results_updated_at()
@@ -248,7 +252,8 @@ all_teams = list(expectations.keys())
 
 _validate_team_coverage()
 
-states, source, updated_at = get_team_states(tuple(all_teams))
+merged_results = _merged_results()
+states, source, updated_at = get_team_states(tuple(all_teams), merged_results)
 scores = scoring.compute_scores(participants, expectations, states)
 
 # --- 4. UI TABS ---
@@ -287,6 +292,19 @@ with tabs[0]:
         board_rows.append(row)
     board = pd.DataFrame(board_rows)
     render_table(board)
+
+    st.divider()
+    st.subheader("📈 Score over time")
+    timeline = scoring.compute_score_timeline(
+        merged_results, participants, expectations, all_teams, GROUP_TEAMS, SGT_SCHEDULE,
+    )
+    if not timeline:
+        st.caption("No matches played yet — each player's running total will chart here as results come in.")
+    else:
+        trend_df = pd.DataFrame(timeline).set_index("date")
+        trend_df.index.name = "Date"
+        st.caption("Cumulative total score after each match day. Hover a line for values; use the legend to focus on a player.")
+        st.line_chart(trend_df, height=360)
 
     st.divider()
     st.subheader("🔍 Portfolio breakdowns")
