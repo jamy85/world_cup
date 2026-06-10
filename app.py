@@ -260,6 +260,15 @@ merged_results = _merged_results()
 states, source, updated_at = get_team_states(tuple(all_teams), merged_results)
 scores = scoring.compute_scores(participants, expectations, states)
 
+# Fill in knockout fixtures (Winner A, 3rd (…), W(M74)…) with the real teams as
+# results decide them; {match No: "Home vs Away"} with placeholders kept where
+# still undecided. Used by the schedule and knockout draw tabs.
+resolved_bracket = scoring.resolve_bracket(SGT_SCHEDULE, states, GROUP_TEAMS, merged_results)
+
+def resolved_match(row):
+    """The fixture for a schedule row, with knockout placeholders resolved."""
+    return resolved_bracket.get(str(row.get("No", "")).strip(), row["Match"])
+
 # --- 4. UI TABS ---
 st.title("🏆 RMD World Cup 2026 Sweepstake")
 
@@ -396,16 +405,18 @@ with tabs[1]:
     else:
         filtered = sched_df
 
-    def _flag_safe(match, stage, idx):
-        if not stage.startswith("Group "):
-            return ""
+    def _flag_safe(match, idx):
+        # Flag any side that's resolved to a real team (group or knockout);
+        # placeholders like "Winner E" / "W(M74)" stay blank.
         parts = match.split(" vs ")
-        return get_flag(parts[idx].strip()) if len(parts) > idx else ""
+        team = parts[idx].strip() if len(parts) > idx else ""
+        return get_flag(team) if team in FLAG_CODES else ""
 
     filtered = filtered.copy()
+    filtered["Match"] = filtered.apply(resolved_match, axis=1)
     # Single vs double space → distinct column keys that both render as blank headers.
-    filtered[" "] = filtered.apply(lambda r: _flag_safe(r["Match"], r["Stage"], 0), axis=1)
-    filtered["  "] = filtered.apply(lambda r: _flag_safe(r["Match"], r["Stage"], 1), axis=1)
+    filtered[" "] = filtered["Match"].apply(lambda m: _flag_safe(m, 0))
+    filtered["  "] = filtered["Match"].apply(lambda m: _flag_safe(m, 1))
 
     render_table(
         filtered[["Date", "SGT Time", " ", "Match", "  ", "Stage"]],
@@ -437,31 +448,35 @@ with tabs[3]:
         rows = [m for m in SGT_SCHEDULE if m["Stage"] == stage]
         return sorted(rows, key=lambda m: int(m["No"][1:]) if m["No"] else 0)
 
+    def _label(m):
+        """Resolved fixture for a knockout row, with placeholders prettified."""
+        return _prettify(resolved_match(m))
+
     kcols = st.columns(5)
 
     with kcols[0]:
         st.caption("Round of 32")
         for m in _by_no("Round of 32"):
-            st.info(f"**{m['No']}:** {_prettify(m['Match'])}")
+            st.info(f"**{m['No']}:** {_label(m)}")
 
     with kcols[1]:
         st.caption("Round of 16")
         for m in _by_no("Round of 16"):
-            st.info(f"**{m['No']}:** {m['Match']}")
+            st.info(f"**{m['No']}:** {_label(m)}")
 
     with kcols[2]:
         st.caption("Quarter-Finals")
         for m in _by_no("Quarter-Final"):
-            st.warning(f"**{m['No']}:** {m['Match']}")
+            st.warning(f"**{m['No']}:** {_label(m)}")
 
     with kcols[3]:
         st.caption("Semi-Finals")
         for m in _by_no("Semi-Final"):
-            st.error(f"**{m['No']}:** {m['Match']}")
+            st.error(f"**{m['No']}:** {_label(m)}")
 
     with kcols[4]:
         st.caption("Final & 3rd Place")
         for m in _by_no("Final"):
-            st.success(f"🏆 **{m['No']}:** {m['Match']}")
+            st.success(f"🏆 **{m['No']}:** {_label(m)}")
         for m in _by_no("3rd Place"):
-            st.info(f"🥉 **{m['No']}:** {m['Match']}")
+            st.info(f"🥉 **{m['No']}:** {_label(m)}")

@@ -19,6 +19,7 @@ A player's total is the sum of their three picks.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 
 import requests
 
@@ -321,6 +322,158 @@ def _resolve_group_qualification(states, group_teams, promote):
             promote(t, "R32")
         for t in ranked_thirds[8:]:
             states[t]["done"] = True
+
+
+# --- Bracket resolution -----------------------------------------------------
+# Turn the schedule's placeholder knockout fixtures ("Winner E", "Runner-up B",
+# "3rd (A/B/C/D/F)", "W(M74)") into real teams once results decide them. Each
+# side resolves independently and only when *provably* determined, so a fixture
+# can show one real team next to a still-pending placeholder, and nothing shown
+# is ever a guess.
+
+_RE_WINNER = re.compile(r"^Winner ([A-L])$")
+_RE_RUNNER = re.compile(r"^Runner-up ([A-L])$")
+_RE_THIRD = re.compile(r"^3rd \(([A-L/]+)\)$")
+_RE_WMATCH = re.compile(r"^W\(M(\d+)\)$")
+
+# Schedule "Stage" text for each knockout round, in the order they're played so
+# a round's winners are known before the next round is resolved.
+_KO_STAGES = ["Round of 32", "Round of 16", "Quarter-Final", "Semi-Final", "Final"]
+
+
+def _group_complete_order(states, teams):
+    """Teams of a group ranked best-first, or None until all have played 3."""
+    def played(t):
+        s = states.get(t)
+        return (s["wins"] + s["draws"] + s["losses"]) if s else 0
+    if not all(played(t) == 3 for t in teams):
+        return None
+    return sorted(teams, key=lambda t: _group_rank_key(states[t]), reverse=True)
+
+
+def _best_thirds(states, group_teams):
+    """{group_letter: third_placed_team} for the 8 best thirds, or None until
+    every group is complete (their relative ranking isn't final before then)."""
+    thirds = {}
+    for g, teams in group_teams.items():
+        order = _group_complete_order(states, teams)
+        if order is None or len(order) < 3:
+            return None
+        thirds[g] = order[2]
+    ranked = sorted(thirds, key=lambda g: _group_rank_key(states[thirds[g]]), reverse=True)
+    return {g: thirds[g] for g in ranked[:8]}
+
+
+def _assign_third_slots(schedule, states, group_teams):
+    """Map each R32 'No' hosting a best-third slot to the team that fills it.
+
+    Each slot allows thirds from a fixed set of groups (the "3rd (A/B/C/D/F)"
+    text); the 8 qualifying thirds must fill the 8 slots one-to-one. We assign a
+    slot only when it holds the *same* group in every valid perfect matching of
+    groups to slots. FIFA's official allocation is one such matching, so a slot
+    that's invariant across all of them must equal it — provably correct. Slots
+    that vary between equally-valid matchings stay unresolved (placeholder kept).
+    """
+    thirds = _best_thirds(states, group_teams)
+    if not thirds:
+        return {}
+    qualifying = set(thirds)
+
+    slots = {}  # match No -> set of qualifying groups it may host
+    for m in schedule:
+        no = str(m.get("No", "")).strip()
+        for tok in str(m.get("Match", "")).split(" vs "):
+            mm = _RE_THIRD.match(tok.strip())
+            if mm and no:
+                slots[no] = set(mm.group(1).split("/")) & qualifying
+
+    slot_nos = list(slots)
+    matchings = []  # every one-to-one group→slot assignment respecting `allowed`
+
+    def backtrack(i, used, current):
+        if i == len(slot_nos):
+            matchings.append(dict(current))
+            return
+        no = slot_nos[i]
+        for g in slots[no]:
+            if g not in used:
+                used.add(g)
+                current[no] = g
+                backtrack(i + 1, used, current)
+                used.discard(g)
+                del current[no]
+
+    backtrack(0, set(), {})
+    if not matchings:
+        return {}
+
+    assigned = {}  # No -> group, kept only when invariant across all matchings
+    for no in slot_nos:
+        options = {mm[no] for mm in matchings}
+        if len(options) == 1:
+            assigned[no] = next(iter(options))
+    return {no: thirds[g] for no, g in assigned.items()}
+
+
+def resolve_bracket(schedule, states, group_teams, results) -> dict:
+    """Resolve placeholder knockout fixtures to real teams where decided.
+
+    Returns {match No: "Home vs Away"} for every knockout row, with each side
+    replaced by its real team when known and left as the original placeholder
+    text otherwise. Only completed results drive resolution — nothing assumed.
+    """
+    placement = {}  # ("Winner"|"Runner-up", group) -> team
+    for g, teams in group_teams.items():
+        order = _group_complete_order(states, teams)
+        if order and len(order) >= 2:
+            placement[("Winner", g)] = order[0]
+            placement[("Runner-up", g)] = order[1]
+
+    third_by_no = _assign_third_slots(schedule, states, group_teams)
+
+    winner_of = {}  # frozenset({teamA, teamB}) -> winner (decided games only)
+    for r in results:
+        h, a = canonical_team(r.get("home", "")), canonical_team(r.get("away", ""))
+        hs, as_ = r.get("home_score"), r.get("away_score")
+        if h and a and hs is not None and as_ is not None and hs != as_:
+            winner_of[frozenset((h, a))] = h if hs > as_ else a
+
+    win_by_no = {}  # "M74" -> winning team, filled round by round
+    resolved = {}
+
+    def resolve_side(tok, third_team):
+        m = _RE_WINNER.match(tok)
+        if m:
+            return placement.get(("Winner", m.group(1)))
+        m = _RE_RUNNER.match(tok)
+        if m:
+            return placement.get(("Runner-up", m.group(1)))
+        if _RE_THIRD.match(tok):
+            return third_team
+        m = _RE_WMATCH.match(tok)
+        if m:
+            return win_by_no.get("M" + m.group(1))
+        return tok  # already a literal team name
+
+    rows_by_stage = {}
+    for m in schedule:
+        rows_by_stage.setdefault(str(m.get("Stage", "")), []).append(m)
+
+    for stage in _KO_STAGES:
+        for m in rows_by_stage.get(stage, []):
+            no = str(m.get("No", "")).strip()
+            parts = str(m.get("Match", "")).split(" vs ")
+            if len(parts) != 2:
+                continue
+            sides = [resolve_side(p.strip(), third_by_no.get(no)) for p in parts]
+            if no:
+                resolved[no] = " vs ".join(sides[i] or parts[i].strip() for i in (0, 1))
+            if no and sides[0] and sides[1]:
+                w = winner_of.get(frozenset((sides[0], sides[1])))
+                if w:
+                    win_by_no[no] = w
+
+    return resolved
 
 
 # --- Scoring ----------------------------------------------------------------
