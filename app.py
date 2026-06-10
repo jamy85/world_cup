@@ -277,7 +277,7 @@ if source == "results":
 else:
     st.caption("⏳ No matches played yet — standings will appear once results come in.")
 
-tabs = st.tabs(["🥇 Leaderboard", "📊 Market Tiers", "📈 Group Rankings", "📅 SGT Schedule", "🌳 Knockout Draw"])
+tabs = st.tabs(["🥇 Leaderboard", "📅 SGT Schedule", "📈 Group Rankings", "🌳 Knockout Draw", "📊 Market Tiers"])
 
 with tabs[0]:
     st.header("Tournament Leaderboard")
@@ -330,7 +330,7 @@ with tabs[0]:
                         f"Progression {pick['progression']:+d} · Group {pick['league']:+d}"
                     )
 
-with tabs[1]:
+with tabs[4]:
     st.header("The Market Tiers")
     st.caption("A team's starting **expectation** is its tier value. Beat it to score; fall short to lose points (reversed for Short picks). The number next to each team is their FIFA world ranking — teams are sorted by this within each tier.")
     t_cols = st.columns(3)
@@ -381,7 +381,7 @@ with tabs[2]:
                 st.subheader(f"Group {grp}")
                 render_table(grp_df)
 
-with tabs[3]:
+with tabs[1]:
     st.header("Singapore Time Schedule")
 
     sched_df = pd.DataFrame(SGT_SCHEDULE)
@@ -412,7 +412,7 @@ with tabs[3]:
         image_cols=(" ", "  "),
     )
 
-with tabs[4]:
+with tabs[3]:
     st.header("Knockout Draw")
 
     def _prettify(match: str) -> str:
