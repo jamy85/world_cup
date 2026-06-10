@@ -260,6 +260,11 @@ merged_results = _merged_results()
 states, source, updated_at = get_team_states(tuple(all_teams), merged_results)
 scores = scoring.compute_scores(participants, expectations, states)
 
+# Before any result is in, every score/standing is 0 so "natural" ranking order
+# is meaningless — present ranking tables alphabetically until the tournament
+# actually starts, then switch to performance order.
+tournament_started = source == "results"
+
 # Fill in knockout fixtures (Winner A, 3rd (…), W(M74)…) with the real teams as
 # results decide them; {match No: "Home vs Away"} with placeholders kept where
 # still undecided. Used by the schedule and knockout draw tabs.
@@ -295,8 +300,13 @@ with tabs[0]:
     def _pick_label(pick):
         return f"{pick['team']} ({'L' if pick['position'] == 'Long' else 'S'})"
 
+    # Performance order (by score) once the tournament's underway; alphabetical
+    # by player name beforehand, when every score is still 0.
+    players_ranked = scores["players"] if tournament_started else sorted(
+        scores["players"], key=lambda p: p["name"].lower())
+
     board_rows = []
-    for i, p in enumerate(scores["players"]):
+    for i, p in enumerate(players_ranked):
         row = {"Rank": i + 1, "Player": p["name"], "Score": p["total"]}
         for j in range(3):  # always 3 columns, even if a player has fewer picks
             pick = p["picks"][j] if j < len(p["picks"]) else None
@@ -321,7 +331,7 @@ with tabs[0]:
 
     st.divider()
     st.subheader("🔍 Portfolio breakdowns")
-    for p in scores["players"]:
+    for p in players_ranked:
         with st.expander(f"**{p['name']}** — {p['total']:+d} pts"):
             cols = st.columns(3)
             for col, pick in zip(cols, p["picks"]):
@@ -385,7 +395,9 @@ with tabs[2]:
                     "Pts": pts, "W": s["wins"], "D": s["draws"], "L": s["losses"],
                     "GD": gd,
                 })
-            grp_df = pd.DataFrame(rows).sort_values(["Pts", "GD", "W"], ascending=False)
+            grp_df = pd.DataFrame(rows)
+            grp_df = (grp_df.sort_values(["Pts", "GD", "W"], ascending=False)
+                      if tournament_started else grp_df.sort_values("Team"))
             with col:
                 st.subheader(f"Group {grp}")
                 render_table(grp_df)
