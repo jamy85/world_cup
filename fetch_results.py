@@ -16,6 +16,7 @@ Exit code is non-zero only on a genuine network/HTTP failure; "no completed
 matches yet" is a clean no-op so the daily job doesn't go red before kick-off.
 """
 
+import datetime
 import sys
 
 import pandas as pd
@@ -25,6 +26,7 @@ import scoring
 CACHE_FILE = "results_cache.csv"
 SCHEDULE_FILE = "schedule.csv"
 EXPECTATIONS_FILE = "team_expectations.csv"
+REFRESH_FILE = "last_refresh.txt"          # UTC ISO timestamp of the last run
 COLUMNS = ["Home", "Away", "HomeScore", "AwayScore", "Stage", "Date"]
 
 # Best-effort matchday → knockout stage (48-team format: 3 group rounds first).
@@ -79,9 +81,14 @@ def main():
     groups = _group_lookup()
     events = scoring.fetch_events()           # raises on real network/HTTP error
 
+    # Stamp the run time (UTC) on every successful fetch — even when no new
+    # results are found — so the app can show when the refresh last ran.
+    with open(REFRESH_FILE, "w") as f:
+        f.write(datetime.datetime.now(datetime.timezone.utc).isoformat())
+
     rows = [r for r in (_match_row(ev, groups) for ev in events) if r]
     if not rows:
-        print("No completed matches found yet — leaving the cache untouched. "
+        print("No completed matches found yet — cache untouched; refresh time updated. "
               "(Expected before kick-off; the data source may also be incomplete.)")
         return
 

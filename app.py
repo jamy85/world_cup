@@ -10,6 +10,7 @@ import scoring
 CACHE_FILE = "results_cache.csv"     # auto-fetched results (GitHub Action)
 RESULTS_FILE = "results.csv"         # manual results / overrides (hand-edited)
 SCHEDULE_FILE = "schedule.csv"
+REFRESH_FILE = "last_refresh.txt"    # UTC ISO timestamp of the last refresh run
 
 # --- 1. STYLING & PREMIUM GRASS BACKGROUND ---
 st.set_page_config(page_title="RMD World Cup 2026 Sweepstake", layout="wide", page_icon="⚽")
@@ -236,6 +237,16 @@ def _results_updated_at():
             pass
     return datetime.datetime.fromtimestamp(max(times)) if times else None
 
+def _last_refresh_at():
+    """When the refresh job (daily cron or manual trigger) last ran, as written
+    to last_refresh.txt by fetch_results.py. Falls back to the results files'
+    mtime if the stamp file isn't there yet (e.g. before the first run)."""
+    try:
+        with open(REFRESH_FILE, encoding="utf-8") as f:
+            return datetime.datetime.fromisoformat(f.read().strip())
+    except (OSError, ValueError):
+        return _results_updated_at()
+
 # Single source of truth = the teams that actually appear in the schedule.
 # Warn (don't crash) if the flag/ranking/tier tables drift out of sync with it.
 def _validate_team_coverage():
@@ -257,7 +268,7 @@ all_teams = list(expectations.keys())
 _validate_team_coverage()
 
 merged_results = _merged_results()
-states, source, updated_at = get_team_states(tuple(all_teams), merged_results)
+states, source, _ = get_team_states(tuple(all_teams), merged_results)
 scores = scoring.compute_scores(participants, expectations, states)
 
 # Before any result is in, every score/standing is 0 so "natural" ranking order
@@ -285,11 +296,11 @@ def _stamp_sgt(dt):
         dt = dt.replace(tzinfo=datetime.timezone.utc)
     return dt.astimezone(sgt).strftime("%d %b %Y, %H:%M SGT")
 
-stamp = _stamp_sgt(updated_at)
+stamp = _stamp_sgt(_last_refresh_at())
 if source == "results":
-    st.caption(f"📅 Results update daily · last updated {stamp}")
+    st.caption(f"🔄 Last refresh: {stamp} · results refresh automatically once a day")
 else:
-    st.caption("⏳ No matches played yet — standings will appear once results come in.")
+    st.caption(f"🔄 Last refresh: {stamp} · no matches played yet — standings appear once results come in")
 
 tabs = st.tabs(["🥇 Leaderboard", "📅 SGT Schedule", "📈 Group Rankings", "🌳 Knockout Draw", "📊 Market Tiers"])
 
