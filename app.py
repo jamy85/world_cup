@@ -417,14 +417,17 @@ with tabs[1]:
     st.header("Singapore Time Schedule")
 
     sched_df = pd.DataFrame(SGT_SCHEDULE)
-    sched_df["_date"] = pd.to_datetime(sched_df["Date"], format="%d %b %Y").dt.date
-    today = datetime.date.today()
+    sched_df["_kickoff"] = pd.to_datetime(
+        sched_df["Date"] + " " + sched_df["SGT Time"], format="%d %b %Y %I:%M %p"
+    )
+    sgt = datetime.timezone(datetime.timedelta(hours=8))
+    now_sgt = datetime.datetime.now(sgt).replace(tzinfo=None)
 
     view = st.radio("Show", ["Upcoming", "Past", "All"], horizontal=True, index=0)
     if view == "Upcoming":
-        filtered = sched_df[sched_df["_date"] >= today]
+        filtered = sched_df[sched_df["_kickoff"] >= now_sgt]
     elif view == "Past":
-        filtered = sched_df[sched_df["_date"] < today]
+        filtered = sched_df[sched_df["_kickoff"] < now_sgt]
     else:
         filtered = sched_df
 
