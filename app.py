@@ -288,17 +288,28 @@ def resolved_match(row):
 # --- 4. UI TABS ---
 st.title("🏆 RMD World Cup 2026 Sweepstake")
 
+SGT = datetime.timezone(datetime.timedelta(hours=8))
+REFRESH_HOURS_SGT = (9, 15)   # mirrors the cron in .github/workflows/daily-results.yml
+
 def _stamp_sgt(dt):
     if dt is None:
         return "unknown"
-    sgt = datetime.timezone(datetime.timedelta(hours=8))
     if dt.tzinfo is None:                      # mtime fallback is naive UTC on the server
         dt = dt.replace(tzinfo=datetime.timezone.utc)
-    return dt.astimezone(sgt).strftime("%d %b %Y, %H:%M SGT")
+    return dt.astimezone(SGT).strftime("%d %b %Y, %H:%M SGT")
+
+def _next_refresh_sgt():
+    """The next scheduled refresh in SGT, given the twice-daily cron."""
+    now = datetime.datetime.now(SGT)
+    candidates = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in REFRESH_HOURS_SGT]
+    upcoming = [c for c in candidates if c > now]
+    nxt = upcoming[0] if upcoming else candidates[0] + datetime.timedelta(days=1)
+    label = "today" if nxt.date() == now.date() else "tomorrow"
+    return f"{nxt.strftime('%H:%M')} SGT {label}"
 
 stamp = _stamp_sgt(_last_refresh_at())
 if source == "results":
-    st.caption(f"🔄 Last refresh: {stamp} · results refresh automatically once a day")
+    st.caption(f"🔄 Last refresh: {stamp} · next refresh ~{_next_refresh_sgt()}")
 else:
     st.caption(f"🔄 Last refresh: {stamp} · no matches played yet — standings appear once results come in")
 

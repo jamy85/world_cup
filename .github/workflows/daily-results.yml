@@ -1,15 +1,14 @@
 name: Daily results refresh
 
-# Fetches World Cup results once a day and commits the updated cache so the
-# Streamlit Cloud app always shows data no more than ~a day old, regardless
-# of whether anyone opens it.
+# Fetches World Cup results twice a day and commits the updated cache so the
+# Streamlit Cloud app always shows fresh data, regardless of whether anyone
+# opens it.
 
 on:
   schedule:
-    # 08:00 UTC = 16:00 SGT — after the day's matches finish (latest kickoff
-    # is ~12:00 PM SGT) plus buffer for the data source to populate.
+    # Twice daily: 01:00 UTC = 09:00 SGT and 07:00 UTC = 15:00 SGT.
     # Note: GitHub may delay scheduled runs during peak load.
-    - cron: "0 8 * * *"
+    - cron: "0 1,7 * * *"
   workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 permissions:
@@ -45,6 +44,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "Nothing to commit (fetch produced no changes)."
           else
-            git commit -m "Daily results refresh ($(date -u +%Y-%m-%d))"
+            git commit -m "Results refresh ($(date -u '+%Y-%m-%d %H:%M UTC'))"
             git push
           fi
