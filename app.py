@@ -323,13 +323,17 @@ with tabs[0]:
         return f"{pick['team']} ({'L' if pick['position'] == 'Long' else 'S'})"
 
     # Performance order (by score) once the tournament's underway; alphabetical
-    # by player name beforehand, when every score is still 0.
+    # by player name beforehand, when every score is still 0. Used to assign
+    # each player's standing and to order the chart / portfolio breakdowns.
     players_ranked = scores["players"] if tournament_started else sorted(
         scores["players"], key=lambda p: p["name"].lower())
+    rank_by_name = {p["name"]: i + 1 for i, p in enumerate(players_ranked)}
 
+    # The picks table itself is always listed alphabetically by player so a
+    # given person is easy to find; the Rank column still shows their standing.
     board_rows = []
-    for i, p in enumerate(players_ranked):
-        row = {"Rank": i + 1, "Player": p["name"], "Score": p["total"]}
+    for p in sorted(scores["players"], key=lambda p: p["name"].lower()):
+        row = {"Rank": rank_by_name[p["name"]], "Player": p["name"], "Score": p["total"]}
         for j in range(3):  # always 3 columns, even if a player has fewer picks
             pick = p["picks"][j] if j < len(p["picks"]) else None
             row[f"Team {j + 1}"] = _pick_label(pick) if pick else "—"
