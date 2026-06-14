@@ -289,7 +289,7 @@ def resolved_match(row):
 st.title("🏆 RMD World Cup 2026 Sweepstake")
 
 SGT = datetime.timezone(datetime.timedelta(hours=8))
-REFRESH_HOURS_SGT = (9, 15)   # mirrors the cron in .github/workflows/daily-results.yml
+REFRESH_HOURS_SGT = (7, 11, 14)   # mirrors the cron in .github/workflows/daily-results.yml
 
 def _stamp_sgt(dt):
     if dt is None:
@@ -299,7 +299,7 @@ def _stamp_sgt(dt):
     return dt.astimezone(SGT).strftime("%d %b %Y, %H:%M SGT")
 
 def _next_refresh_sgt():
-    """The next scheduled refresh in SGT, given the twice-daily cron."""
+    """The next scheduled refresh in SGT, given the thrice-daily cron."""
     now = datetime.datetime.now(SGT)
     candidates = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in REFRESH_HOURS_SGT]
     upcoming = [c for c in candidates if c > now]

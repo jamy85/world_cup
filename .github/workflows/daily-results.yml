@@ -6,9 +6,12 @@ name: Daily results refresh
 
 on:
   schedule:
-    # Twice daily: 01:00 UTC = 09:00 SGT and 07:00 UTC = 15:00 SGT.
-    # Note: GitHub may delay scheduled runs during peak load.
-    - cron: "0 1,7 * * *"
+    # Three times daily, in SGT (UTC+8):
+    #   23:23 UTC = 07:23 SGT, 03:23 UTC = 11:23 SGT, 06:23 UTC = 14:23 SGT.
+    # Offset to minute :23 (off the top of the hour) to reduce GitHub's
+    # scheduled-run queue delay, which is worst at minute :00. Note: GitHub
+    # still treats scheduled runs as best-effort and may delay them anyway.
+    - cron: "23 23,3,6 * * *"
   workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 permissions:
