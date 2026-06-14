@@ -372,7 +372,9 @@ with tabs[0]:
                 "Player:N",
                 legend=alt.Legend(
                     orient="bottom",
-                    columns=4,
+                    direction="horizontal",
+                    # No fixed `columns`: a horizontal bottom legend wraps its
+                    # entries to the available browser width on its own.
                     symbolLimit=0,    # show every player, no truncation
                     labelLimit=200,
                     title=None,
@@ -392,7 +394,19 @@ with tabs[0]:
             ],
         ).add_params(hover)
 
-        chart = (lines + points).add_params(focus, zoom).properties(height=360)
+        # `height` is the plotting-area height only; the wrapped legend is laid
+        # out below it (autosize "pad"), so the chart keeps this minimum no
+        # matter how many rows the legend needs.
+        chart = (
+            (lines + points)
+            .add_params(focus, zoom)
+            .properties(
+                height=400,
+                # "pad" (the default) grows the chart to fit the legend below
+                # the plot instead of shrinking the plot to share the space.
+                autosize=alt.AutoSizeParams(type="pad", contains="padding"),
+            )
+        )
         st.altair_chart(chart, use_container_width=True)
 
     st.divider()
