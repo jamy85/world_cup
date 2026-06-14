@@ -2,6 +2,7 @@ import datetime
 import os
 import re
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -348,10 +349,38 @@ with tabs[0]:
     if not timeline:
         st.caption("No matches played yet — each player's running total will chart here as results come in.")
     else:
-        trend_df = pd.DataFrame(timeline).set_index("date")
-        trend_df.index.name = "Date"
-        st.caption("Cumulative total score after each match day. Hover a line for values; use the legend to focus on a player.")
-        st.line_chart(trend_df, height=360)
+        # Long form for Altair: one row per (player, date) so we can drive an
+        # interactive, click-to-focus legend that st.line_chart can't offer.
+        trend_long = (
+            pd.DataFrame(timeline)
+            .melt(id_vars="date", var_name="Player", value_name="Score")
+            .rename(columns={"date": "Date"})
+        )
+        st.caption("Cumulative total score after each match day. Hover a line for values; click a name in the legend to focus on a player (shift-click to add more, click blank space to reset).")
+        focus = alt.selection_point(fields=["Player"], bind="legend")
+        chart = (
+            alt.Chart(trend_long)
+            .mark_line(point=alt.OverlayMarkDef(size=18))
+            .encode(
+                x=alt.X("Date:T", title="Date"),
+                y=alt.Y("Score:Q", title="Cumulative score"),
+                color=alt.Color(
+                    "Player:N",
+                    legend=alt.Legend(
+                        orient="bottom",
+                        columns=4,
+                        symbolLimit=0,    # show every player, no truncation
+                        labelLimit=200,
+                        title=None,
+                    ),
+                ),
+                opacity=alt.condition(focus, alt.value(1.0), alt.value(0.12)),
+                tooltip=["Player:N", alt.Tooltip("Date:T", title="Date"), "Score:Q"],
+            )
+            .add_params(focus)
+            .properties(height=360)
+        )
+        st.altair_chart(chart, use_container_width=True)
 
     st.divider()
     st.subheader("🔍 Portfolio breakdowns")
