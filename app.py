@@ -349,22 +349,23 @@ with tabs[0]:
     if not timeline:
         st.caption("No matches played yet — each player's running total will chart here as results come in.")
     else:
-        # Wide form (date + one column per player) for the combined hover
-        # tooltip; long form (one row per player/date) for the lines themselves.
-        trend_wide = pd.DataFrame(timeline).rename(columns={"date": "Date"})
-        players = [c for c in trend_wide.columns if c != "Date"]
-        trend_long = trend_wide.melt(
-            id_vars="Date", var_name="Player", value_name="Score"
+        # Long form: one row per (player, date).
+        trend_long = (
+            pd.DataFrame(timeline)
+            .melt(id_vars="date", var_name="Player", value_name="Score")
+            .rename(columns={"date": "Date"})
         )
-        st.caption("Cumulative total score after each match day. Hover for every player's score on a date; scroll or drag to zoom and pan (double-click to reset). Click a name in the legend to focus on a player (shift-click to add more, click blank space to reset).")
+        st.caption("Cumulative total score after each match day. Hover a line for that player's score; scroll or drag to zoom and pan (double-click to reset). Click a name in the legend to focus on a player (shift-click to add more, click blank space to reset).")
 
         focus = alt.selection_point(fields=["Player"], bind="legend")
         zoom = alt.selection_interval(bind="scales")   # scroll to zoom, drag to pan
+        # Nearest single point under the cursor (by both axes), so the tooltip
+        # describes one player at one date rather than all of them at once.
         hover = alt.selection_point(
-            nearest=True, on="pointerover", fields=["Date"], empty=False
+            on="pointerover", nearest=True, empty=False, encodings=["x", "y"]
         )
 
-        lines = alt.Chart(trend_long).mark_line().encode(
+        base = alt.Chart(trend_long).encode(
             x=alt.X("Date:T", title="Date"),
             y=alt.Y("Score:Q", title="Cumulative score"),
             color=alt.Color(
@@ -379,20 +380,19 @@ with tabs[0]:
             ),
             opacity=alt.condition(focus, alt.value(1.0), alt.value(0.12)),
         )
-        # Dot on each line at the hovered date.
-        markers = lines.mark_point(size=55, filled=True).encode(
+        lines = base.mark_line()
+        # Per-point markers: invisible until they're the nearest point, then they
+        # pop in and carry the single-player tooltip.
+        points = base.mark_point(size=70, filled=True).encode(
             opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
-        )
-        # Transparent vertical rule that catches the cursor and shows a tooltip
-        # listing every player's score for that date.
-        rule = alt.Chart(trend_wide).mark_rule(color="gray").encode(
-            x="Date:T",
-            opacity=alt.condition(hover, alt.value(0.3), alt.value(0.0)),
-            tooltip=[alt.Tooltip("Date:T", title="Date")]
-            + [alt.Tooltip(f"{p}:Q") for p in players],
+            tooltip=[
+                alt.Tooltip("Player:N"),
+                alt.Tooltip("Date:T", title="Date"),
+                alt.Tooltip("Score:Q"),
+            ],
         ).add_params(hover)
 
-        chart = (lines + markers + rule).add_params(focus, zoom).properties(height=360)
+        chart = (lines + points).add_params(focus, zoom).properties(height=360)
         st.altair_chart(chart, use_container_width=True)
 
     st.divider()
