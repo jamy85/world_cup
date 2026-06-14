@@ -408,9 +408,10 @@ with tabs[0]:
                 # column count keys off, so it tracks the browser window.
                 width="container",
                 height=400,
-                # "pad" (the default) grows the chart to fit the legend below
-                # the plot instead of shrinking the plot to share the space.
-                autosize=alt.AutoSizeParams(type="pad", contains="padding"),
+                # "fit-x" keeps the total width within the container (no
+                # horizontal overflow) while leaving height free to grow, so
+                # the wrapped legend stacks below the 400px plot.
+                autosize=alt.AutoSizeParams(type="fit-x", contains="padding"),
             )
         )
         st.altair_chart(chart, use_container_width=True)
