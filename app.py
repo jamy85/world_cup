@@ -373,10 +373,13 @@ with tabs[0]:
                 legend=alt.Legend(
                     orient="bottom",
                     direction="horizontal",
-                    # No fixed `columns`: a horizontal bottom legend wraps its
-                    # entries to the available browser width on its own.
+                    # Wrap responsively: the column count is derived from the
+                    # live container width signal, so the legend reflows into
+                    # more/fewer rows as the browser window resizes (~140px per
+                    # entry) and never overflows horizontally.
+                    columns=alt.expr("max(1, floor(width / 140))"),
                     symbolLimit=0,    # show every player, no truncation
-                    labelLimit=200,
+                    labelLimit=160,
                     title=None,
                 ),
             ),
@@ -401,6 +404,9 @@ with tabs[0]:
             (lines + points)
             .add_params(focus, zoom)
             .properties(
+                # "container" width exposes the live `width` signal the legend's
+                # column count keys off, so it tracks the browser window.
+                width="container",
                 height=400,
                 # "pad" (the default) grows the chart to fit the legend below
                 # the plot instead of shrinking the plot to share the space.
