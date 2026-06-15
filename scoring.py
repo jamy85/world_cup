@@ -19,6 +19,7 @@ A player's total is the sum of their three picks.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
 
 import requests
@@ -43,11 +44,32 @@ ROUND_ORDER = ["Group", "R32", "R16", "QF", "SF", "Final", "Winner"]
 
 LEAGUE_POINTS = {"win": 3, "draw": 1, "loss": 0}
 
-# TheSportsDB free/test key. No signup required.
-_TSDB_KEY = "3"
+# TheSportsDB API key. Defaults to the free/test key "3" (no signup, but it
+# serves a stale, capped snapshot for in-progress seasons). Set TSDB_KEY to a
+# premium/Patreon key for full, current season data — that's what the daily
+# job uses via a repo secret.
+_TSDB_KEY = os.environ.get("TSDB_KEY", "").strip() or "3"
 _TSDB_BASE = f"https://www.thesportsdb.com/api/v1/json/{_TSDB_KEY}"
 _SEASON = "2026"
 _HTTP_TIMEOUT = 20
+
+# football-data.org — preferred source when a key is configured. Its free tier
+# covers the FIFA World Cup and (unlike TheSportsDB's free key) stays current
+# for an in-progress tournament. Auth is an X-Auth-Token header.
+_FD_KEY = os.environ.get("FOOTBALL_DATA_API_KEY", "").strip()
+_FD_BASE = "https://api.football-data.org/v4"
+_FD_COMPETITION = "WC"  # FIFA World Cup competition code
+
+# football-data's knockout `stage` -> the matchday "round" number our
+# schedule-matcher expects (fetch_results.ROUND_TO_STAGE maps 4..8 back to
+# R32..Final). Group games carry their real matchday (1-3) instead.
+_FD_STAGE_ROUND = {
+    "LAST_32": 4,
+    "LAST_16": 5,
+    "QUARTER_FINALS": 6,
+    "SEMI_FINALS": 7,
+    "FINAL": 8,
+}
 
 # Map the many ways data sources spell a country onto our canonical names
 # (the names used in team_expectations.csv and participants.csv).
@@ -141,16 +163,62 @@ def _find_world_cup_league_id(session: requests.Session) -> str:
     return "4429"
 
 
-def fetch_events() -> list[dict]:
-    """Fetch raw World Cup 2026 fixtures from TheSportsDB.
+def _fetch_events_football_data() -> list[dict]:
+    """Fetch World Cup fixtures from football-data.org (when a key is set).
 
-    Returns normalised dicts with the score and matchday round; the *stage* is
-    deliberately NOT inferred here — TheSportsDB leaves strStage/strGroup empty
-    for this tournament, so the caller maps each event onto our own schedule
-    (which already knows the stage) instead:
-        {home, away, home_score, away_score, round, finished}
+    Returns the same normalised dicts as fetch_events(). football-data gives a
+    real `stage`/`matchday`, which we translate into the matchday "round"
+    number the schedule-matcher already understands, so the caller is unchanged.
+    """
+    resp = requests.get(
+        f"{_FD_BASE}/competitions/{_FD_COMPETITION}/matches",
+        headers={"X-Auth-Token": _FD_KEY},
+        timeout=_HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    matches = resp.json().get("matches") or []
+
+    events: list[dict] = []
+    for m in matches:
+        stage = str(m.get("stage", ""))
+        if stage == "THIRD_PLACE":          # mirrors the TSDB path: not scored
+            continue
+        if stage == "GROUP_STAGE":
+            md = m.get("matchday")
+            rnd = int(md) if str(md).strip().isdigit() else None
+        else:
+            rnd = _FD_STAGE_ROUND.get(stage)
+
+        ft = (m.get("score") or {}).get("fullTime") or {}
+        hs, as_ = ft.get("home"), ft.get("away")
+        finished = str(m.get("status", "")).upper() == "FINISHED"
+        events.append(
+            {
+                "home": canonical_team((m.get("homeTeam") or {}).get("name", "")),
+                "away": canonical_team((m.get("awayTeam") or {}).get("name", "")),
+                "home_score": hs if isinstance(hs, int) else None,
+                "away_score": as_ if isinstance(as_, int) else None,
+                "round": rnd,
+                "date": str(m.get("utcDate", ""))[:10],  # ISO date, e.g. 2026-07-06
+                "finished": bool(finished),
+            }
+        )
+    return events
+
+
+def fetch_events() -> list[dict]:
+    """Fetch raw World Cup 2026 fixtures from the configured source.
+
+    Uses football-data.org when FOOTBALL_DATA_API_KEY is set, else falls back
+    to TheSportsDB's free key. Either way returns normalised dicts with the
+    score and matchday round; the *stage* is deliberately NOT inferred here, so
+    the caller maps each event onto our own schedule (which knows the stage):
+        {home, away, home_score, away_score, round, date, finished}
     Raises on any network/parse failure so the caller can fall back to cache.
     """
+    if _FD_KEY:
+        return _fetch_events_football_data()
+
     session = requests.Session()
     league_id = _find_world_cup_league_id(session)
     resp = session.get(

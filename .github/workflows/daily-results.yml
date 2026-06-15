@@ -37,6 +37,10 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Fetch latest results
+        env:
+          # Preferred source. If unset, falls back to TSDB_KEY, then the free TSDB key.
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          TSDB_KEY: ${{ secrets.TSDB_KEY }}
         run: python fetch_results.py
 
       - name: Commit refreshed cache and run time
