@@ -1,17 +1,18 @@
 name: Daily results refresh
 
-# Fetches World Cup results twice a day and commits the updated cache so the
-# Streamlit Cloud app always shows fresh data, regardless of whether anyone
+# Fetches World Cup results three times a day and commits the updated cache so
+# the Streamlit Cloud app always shows fresh data, regardless of whether anyone
 # opens it.
 
 on:
   schedule:
-    # Three times daily, in SGT (UTC+8):
-    #   23:23 UTC = 07:23 SGT, 03:23 UTC = 11:23 SGT, 06:23 UTC = 14:23 SGT.
-    # Offset to minute :23 (off the top of the hour) to reduce GitHub's
-    # scheduled-run queue delay, which is worst at minute :00. Note: GitHub
-    # still treats scheduled runs as best-effort and may delay them anyway.
-    - cron: "23 23,3,6 * * *"
+    # Targeting ~07:23 / 11:23 / 14:23 SGT (UTC+8). GitHub's scheduled-run
+    # queue tends to fire these ~2h late, so the cron is set 2h ahead of target
+    # — 21:23 / 01:23 / 04:23 UTC — to land near those SGT slots in practice.
+    # Minute :23 (off the top of the hour) also trims queue delay, which is
+    # worst at minute :00. Even so, GitHub treats scheduled runs as best-effort:
+    # exact timing isn't guaranteed and a run is occasionally dropped under load.
+    - cron: "23 1,4,21 * * *"
   workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 permissions:
