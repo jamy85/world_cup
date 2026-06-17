@@ -97,6 +97,9 @@ _NAME_ALIASES = {
     "congo dr": "DR Congo",
     "cape verde": "Cape Verde",
     "cabo verde": "Cape Verde",
+    # football-data.org lists this national team under its long-form name.
+    "cape verde islands": "Cape Verde",
+    "cabo verde islands": "Cape Verde",
 }
 
 

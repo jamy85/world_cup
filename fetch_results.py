@@ -17,7 +17,9 @@ matches yet" is a clean no-op so the daily job doesn't go red before kick-off.
 """
 
 import datetime
+import re
 import sys
+import unicodedata
 
 import pandas as pd
 
@@ -33,10 +35,25 @@ COLUMNS = ["Home", "Away", "HomeScore", "AwayScore", "Stage", "Date"]
 ROUND_TO_STAGE = {4: "R32", 5: "R16", 6: "QF", 7: "SF", 8: "Final"}
 
 
+def _norm(name):
+    """Loose key for fuzzy team matching: lowercased, accent- and
+    punctuation-stripped, with filler words like "islands" dropped. Lets a
+    source spelling we haven't explicitly aliased (e.g. "Cape Verde Islands")
+    still match its scheduled fixture instead of silently mis-keying it."""
+    s = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-z0-9 ]", " ", s.lower())
+    drop = {"islands", "island", "of", "the"}
+    return " ".join(w for w in s.split() if w not in drop)
+
+
 def _group_lookup():
-    """{frozenset(home, away): (home, away)} for every group fixture."""
+    """Two lookups keyed by the two teams of each group fixture, both mapping to
+    the canonical (home, away) schedule pair:
+      exact: {frozenset(home, away): (home, away)}
+      norm:  {frozenset(_norm(home), _norm(away)): (home, away)}  (fuzzy fallback)
+    """
     sched = pd.read_csv(SCHEDULE_FILE, dtype=str).fillna("")
-    lookup = {}
+    exact, norm = {}, {}
     for _, m in sched.iterrows():
         if not m["Stage"].startswith("Group "):
             continue
@@ -44,12 +61,17 @@ def _group_lookup():
         if len(parts) != 2:
             continue
         home, away = parts[0].strip(), parts[1].strip()
-        lookup[frozenset((home, away))] = (home, away)
-    return lookup
+        exact[frozenset((home, away))] = (home, away)
+        norm[frozenset((_norm(home), _norm(away)))] = (home, away)
+    return exact, norm
 
 
 def _match_row(ev, groups):
-    """Map a fetched event onto a result row, or None if it can't be placed."""
+    """Map a fetched event onto a result row, or None if it can't be placed.
+
+    `groups` is the (exact, norm) pair of lookups from _group_lookup().
+    """
+    exact, norm = groups
     home, away = ev["home"], ev["away"]
     hs, as_ = ev["home_score"], ev["away_score"]
     if not (ev["finished"] and home and away and hs is not None and as_ is not None):
@@ -58,17 +80,23 @@ def _match_row(ev, groups):
     rnd = ev["round"]
     date = ev.get("date", "")                 # ISO match date (dateEvent)
     pair = frozenset((home, away))
+    npair = frozenset((_norm(home), _norm(away)))
+    # Resolve to the canonical schedule pair: exact name match first, then the
+    # fuzzy normalized fallback (catches source spellings we don't alias).
+    sched_pair = exact.get(pair) or norm.get(npair)
     # The matchday number decides group-vs-knockout first (rounds 1–3 are the
     # group stage). This matters when two teams who met in the group are drawn
     # together again in a knockout — the pairing alone would be ambiguous.
-    is_group = rnd in (1, 2, 3) or (rnd is None and pair in groups)
+    is_group = rnd in (1, 2, 3) or (rnd is None and sched_pair is not None)
 
     if is_group:
-        if pair in groups:                    # orient scores to our schedule
-            sched_home, sched_away = groups[pair]
-            if home != sched_home:
-                home, away, hs, as_ = away, home, as_, hs
+        if sched_pair:                        # rename + orient scores to our schedule
+            sched_home, sched_away = sched_pair
+            if _norm(home) != _norm(sched_home):
+                hs, as_ = as_, hs
             return {"Home": sched_home, "Away": sched_away, "HomeScore": hs, "AwayScore": as_, "Stage": "Group", "Date": date}
+        print(f"WARNING: group match {home} vs {away} not found in schedule - "
+              f"writing source names as-is (standings may not pick it up).", file=sys.stderr)
         return {"Home": home, "Away": away, "HomeScore": hs, "AwayScore": as_, "Stage": "Group", "Date": date}
 
     stage = ROUND_TO_STAGE.get(rnd)           # knockout best-effort
