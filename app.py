@@ -197,7 +197,15 @@ def load_participants():
 # knockouts, which the schedule can't date by team); blank falls back to the
 # schedule. Group rows in results.csv are pre-filled with their schedule dates.
 def _read_results(path):
-    """Return {(Home, Away): row-dict} for rows that have both scores."""
+    """Return {(canon_home, canon_away, stage): row-dict} for rows with scores.
+
+    Keyed by *canonical* team names (not the raw source spelling) so that a
+    manual results.csv entry overrides an auto-fetched row of the same match
+    even when the sources spell a team differently (e.g. football-data.org's
+    "Cape Verde Islands" vs our "Cape Verde") — otherwise both rows survive the
+    merge and the result is double-counted. Stage is part of the key so two
+    teams who meet twice (group + a knockout rematch) stay distinct.
+    """
     out = {}
     try:
         df = pd.read_csv(path, dtype=str).fillna("")
@@ -208,10 +216,12 @@ def _read_results(path):
         if not (hs.isdigit() and as_.isdigit()):
             continue
         home, away = str(r["Home"]).strip(), str(r["Away"]).strip()
-        out[(home, away)] = {
+        stage = str(r.get("Stage", "")).strip()
+        key = (scoring.canonical_team(home), scoring.canonical_team(away), stage)
+        out[key] = {
             "home": home, "away": away,
             "home_score": int(hs), "away_score": int(as_),
-            "stage": str(r.get("Stage", "")).strip(),
+            "stage": stage,
             "date": str(r.get("Date", "")).strip(),  # optional; blank -> schedule fallback
         }
     return out
