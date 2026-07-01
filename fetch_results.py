@@ -105,6 +105,19 @@ def _match_row(ev, groups):
     return None
 
 
+def _existing_cache_count():
+    """How many completed match rows the saved cache already holds (0 if none).
+
+    Used to guard against a stale/capped source (e.g. TheSportsDB's free key,
+    which serves a truncated snapshot) silently overwriting a fuller cache. Each
+    run writes ALL completed matches, so the count is monotonic for a healthy
+    source — a drop means the source regressed, not that games were un-played."""
+    try:
+        return len(pd.read_csv(CACHE_FILE))
+    except (OSError, pd.errors.EmptyDataError):
+        return 0
+
+
 def main():
     groups = _group_lookup()
     events = scoring.fetch_events()           # raises on real network/HTTP error
@@ -119,6 +132,19 @@ def main():
         print("No completed matches found yet — cache untouched; refresh time updated. "
               "(Expected before kick-off; the data source may also be incomplete.)")
         return
+
+    # Never let a shrunken result set clobber the saved CSV. The fetch writes
+    # every completed match each run, so fewer rows than we already have means
+    # a stale/capped source (typically the free TSDB key when no premium/
+    # football-data key is configured). Keep the fuller cache and fail loudly.
+    existing = _existing_cache_count()
+    if len(rows) < existing:
+        raise RuntimeError(
+            f"Source returned {len(rows)} completed match(es) but the saved cache "
+            f"has {existing} — refusing to overwrite with a smaller (stale/capped) "
+            f"snapshot. {CACHE_FILE} left intact. Configure FOOTBALL_DATA_API_KEY "
+            f"(or a premium TSDB_KEY) for a full, current dataset."
+        )
 
     pd.DataFrame(rows, columns=COLUMNS).to_csv(CACHE_FILE, index=False)
     print(f"Wrote {len(rows)} completed match(es) to {CACHE_FILE}.")
