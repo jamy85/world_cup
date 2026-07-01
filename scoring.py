@@ -411,6 +411,25 @@ _RE_WMATCH = re.compile(r"^W\(M(\d+)\)$")
 # a round's winners are known before the next round is resolved.
 _KO_STAGES = ["Round of 32", "Round of 16", "Quarter-Final", "Semi-Final", "Final"]
 
+# FIFA's predetermined allocation of the eight qualifying third-placed teams to
+# R32 fixtures. This is a fixed lookup keyed by *which* eight groups' thirds
+# qualify — it is NOT derivable from the schedule's "3rd (A/B/C/D/F)" candidate
+# lists alone, because several distinct one-to-one matchings satisfy those
+# lists; FIFA breaks that tie with this table. Each entry maps a group letter to
+# the match "No" that group's third is assigned to. Rows are added as real
+# combinations occur; _assign_third_slots validates every mapping against the
+# schedule's own candidate lists before trusting it, and falls back to the
+# combinatorial "invariant across all matchings" resolution otherwise.
+#   • BDEFIJKL — verified against the official 2026 Round of 32 bracket
+#     (France v 3F, Mexico v 3E, England v 3K, USA v 3B, Belgium v 3I,
+#     Switzerland v 3J; Germany v 3D and Colombia v 3L by elimination).
+_FIFA_THIRD_ALLOCATION = {
+    frozenset("BDEFIJKL"): {
+        "D": "M74", "F": "M77", "E": "M79", "K": "M80",
+        "B": "M81", "I": "M82", "J": "M85", "L": "M87",
+    },
+}
+
 
 def _group_complete_order(states, teams):
     """Teams of a group ranked best-first, or None until all have played 3."""
@@ -439,11 +458,13 @@ def _assign_third_slots(schedule, states, group_teams):
     """Map each R32 'No' hosting a best-third slot to the team that fills it.
 
     Each slot allows thirds from a fixed set of groups (the "3rd (A/B/C/D/F)"
-    text); the 8 qualifying thirds must fill the 8 slots one-to-one. We assign a
-    slot only when it holds the *same* group in every valid perfect matching of
-    groups to slots. FIFA's official allocation is one such matching, so a slot
-    that's invariant across all of them must equal it — provably correct. Slots
-    that vary between equally-valid matchings stay unresolved (placeholder kept).
+    text); the 8 qualifying thirds must fill the 8 slots one-to-one. FIFA's
+    predetermined allocation (_FIFA_THIRD_ALLOCATION) settles this exactly when
+    the realized combination is tabulated. Failing that we fall back to a
+    provable subset: assign a slot only when it holds the *same* group in every
+    valid perfect matching of groups to slots (FIFA's allocation is one such
+    matching, so an invariant slot must equal it). Slots that vary between
+    equally-valid matchings stay unresolved (placeholder kept).
     """
     thirds = _best_thirds(states, group_teams)
     if not thirds:
@@ -457,6 +478,13 @@ def _assign_third_slots(schedule, states, group_teams):
             mm = _RE_THIRD.match(tok.strip())
             if mm and no:
                 slots[no] = set(mm.group(1).split("/")) & qualifying
+
+    # Authoritative FIFA table first — but only trust it if every mapping lands
+    # in a slot the schedule actually allows for that group, so the table can't
+    # silently drift from the bracket. Otherwise fall through to combinatorics.
+    alloc = _FIFA_THIRD_ALLOCATION.get(frozenset(qualifying))
+    if alloc and all(g in slots.get(no, set()) for g, no in alloc.items()):
+        return {no: thirds[g] for g, no in alloc.items()}
 
     slot_nos = list(slots)
     matchings = []  # every one-to-one group→slot assignment respecting `allowed`
