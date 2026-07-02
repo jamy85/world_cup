@@ -68,38 +68,27 @@ works in both Community and Professional.
 Positions are rebuilt cumulatively from the blotter, so P&L is **trade-date
 aware** — no static snapshot assumption.
 
-### 2. Instrument reference (`instruments_*.csv`) — **optional** static data
+### 2. Instrument metadata — resolved from Bloomberg (no file needed)
 
-You can run with **just a blotter**. Any ticker not found in the instruments
-file is auto-resolved:
+**You only provide the blotter.** Currency and contract multiplier are retrieved
+from Bloomberg per contract:
 
 * **Bloomberg ticker** — a bare id (e.g. `DUH6`) gets the portfolio's yellow key
   appended (`DUH6 Comdty`); ids that already include a yellow key are used as-is.
-* **Currency & multiplier** — retrieved live from Bloomberg per contract (one
-  batched request). Currency from `CRNCY`; the futures multiplier (P&L per 1.0
-  price move) from `FUT_VAL_PT`, falling back to `FUT_TICK_VAL / FUT_TICK_SIZE`
-  when `FUT_VAL_PT` is non-numeric (Bloomberg reports `'varies'` for some
-  contracts). Only if neither resolves — or you're offline/in mock — is a
-  portfolio default used, and the app warns which tickers need a manual
-  `point_value`.
+* **Currency** — from `CRNCY`.
+* **Futures multiplier** (P&L per 1.0 price move) — from `FUT_VAL_PT`, falling
+  back to `FUT_TICK_VAL / FUT_TICK_SIZE` when `FUT_VAL_PT` is non-numeric
+  (Bloomberg reports `'varies'` for some contracts).
 
-Provide the file only when you want to **override** those (exact multipliers,
-currencies, ISIN→ticker mappings, or to work precisely in mock mode):
+Only when Bloomberg can't resolve a value — or you're offline / in mock — is a
+per-portfolio default used (see `config.py`), and the app warns which tickers
+need attention.
 
-| column | meaning |
-|---|---|
-| `id` | matches the blotter `id` |
-| `bbg_ticker` | Bloomberg ticker incl. yellow key (e.g. `TYU6 Comdty`, `DE0001102606 Govt`) |
-| `asset_class` | `bond` or `future` (bonds get carry attribution) |
-| `currency` | quote currency (`USD`, `EUR`, `JPY`, …) — used for FX conversion |
-| `point_value` | currency P&L per 1.0 price move per unit of quantity |
-
-**`point_value`:** bonds quoted per 100 with `quantity` = face → `0.01`
-(1 clean point on 1,000,000 face = 10,000). Futures → contract multiplier
-(e.g. 10Y T-Note = `1000`).
-
-Per-portfolio defaults (asset class, currency, point_value, yellow-key suffix)
-live in `config.py`.
+**Optional override:** if you ever need to pin a value (exact multiplier,
+currency, ISIN→ticker mapping, or to work precisely in mock mode), upload an
+overrides CSV via the sidebar with columns
+`id, bbg_ticker, asset_class, currency, point_value`. Any field you supply wins;
+blanks are still filled from Bloomberg.
 
 ## P&L attribution
 
@@ -136,5 +125,5 @@ portfolio toggles EUR/USD.
 - `config.py` — portfolios, colours, shared settings (add a portfolio here)
 - `pnl_engine.py` — blotter → daily attribution + aggregations
 - `providers.py` — `BloombergProvider` (live) and `MockProvider` (fallback)
-- `trades_futures.csv` / `instruments_futures.csv` — sample futures book
-- `trades_bonds.csv` / `instruments_bonds.csv` — sample EUR bond spread book
+- `trades_futures.csv` — sample futures blotter
+- `trades_bonds.csv` — sample EUR bond spread blotter

@@ -36,19 +36,15 @@ def server(input, output, session):
         except Exception as exc:
             return {"error": f"Could not load trades: {exc}", "cfg": cfg}
 
-        # The instruments file is optional: it overrides / supplements the
-        # auto-resolved metadata. Missing it isn't an error.
+        # Instrument metadata (currency, multiplier) comes from Bloomberg per
+        # contract. An uploaded instruments file is an optional override only;
+        # without one, everything is resolved live.
         provided = None
         if input.instruments_file():
             try:
                 provided = eng.load_instruments(input.instruments_file()[0]["datapath"])
             except Exception as exc:
-                return {"error": f"Could not load instruments file: {exc}", "cfg": cfg}
-        else:
-            try:
-                provided = eng.load_instruments(os.path.join(config.HERE, cfg["instruments"]))
-            except Exception:
-                provided = None  # sample file absent — rely fully on inference
+                return {"error": f"Could not load instruments override file: {exc}", "cfg": cfg}
 
         provider, warning = providers.get_provider(prefer_bloomberg=input.use_bbg())
         start = None if input.from_first_trade() else input.start()

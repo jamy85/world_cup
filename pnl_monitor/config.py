@@ -16,7 +16,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORTFOLIOS = {
     "Futures (multi-ccy → USD)": {
         "trades": "trades_futures.csv",
-        "instruments": "instruments_futures.csv",
         "multi_ccy": False,   # reported in USD only
         "show_carry": False,  # futures carry is embedded in price
         # Defaults used to auto-resolve tickers not found in the instruments
@@ -28,7 +27,6 @@ PORTFOLIOS = {
     },
     "Cash bonds (EUR)": {
         "trades": "trades_bonds.csv",
-        "instruments": "instruments_bonds.csv",
         "multi_ccy": True,    # EUR or USD
         "show_carry": True,
         "default_asset_class": "bond",
