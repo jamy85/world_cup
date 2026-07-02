@@ -33,6 +33,7 @@ Each day's local P&L is converted to USD at that day's FX rate and summed.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Dict, List
 
 import pandas as pd
@@ -52,12 +53,39 @@ def _norm_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_ISO_DATE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$")
+
+
+def _parse_trade_dates(s: pd.Series) -> pd.Series:
+    """Parse trade dates tolerantly.
+
+    * Year-first values (``2026-01-05``, ``2026/1/5``) are read as ISO.
+    * Everything else is read **day-first** (``20/1/2026`` → 20 Jan;
+      ``5/1/2026`` → 5 Jan), matching UK/Asia conventions rather than US
+      month-first. This is decided per value, so a file may mix both.
+    """
+    def parse_one(v):
+        v = str(v).strip()
+        if _ISO_DATE.match(v):
+            return pd.to_datetime(v).date()            # year-first
+        return pd.to_datetime(v, dayfirst=True).date()  # day-first for D/M/Y
+
+    raw = s.astype(str).str.strip()
+    try:
+        return raw.map(parse_one)
+    except Exception as exc:
+        raise ValueError(
+            "Could not parse 'trade_date'. Use ISO (YYYY-MM-DD) or day-first "
+            f"(DD/MM/YYYY) dates. Values look like: {raw.head(3).tolist()}. ({exc})"
+        )
+
+
 def load_trades(path_or_buffer) -> pd.DataFrame:
     df = _norm_cols(pd.read_csv(path_or_buffer))
     missing = [c for c in TRADE_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"trade blotter missing columns: {missing}")
-    df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
+    df["trade_date"] = _parse_trade_dates(df["trade_date"])
     df["id"] = df["id"].astype(str).str.strip()
     df["strategy"] = df["strategy"].astype(str).str.strip()
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")

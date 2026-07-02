@@ -60,7 +60,7 @@ works in both Community and Professional.
 | column | meaning |
 |---|---|
 | `id` | instrument key — Bloomberg ticker or ISIN; matches the reference file |
-| `trade_date` | trade date (YYYY-MM-DD) |
+| `trade_date` | trade date — ISO `YYYY-MM-DD` **or** day-first `DD/MM/YYYY` (e.g. `20/1/2026` = 20 Jan) |
 | `quantity` | face value (bonds) or # contracts (futures); **negative = short** |
 | `trade_price` | execution price (bonds: clean price; futures: futures price) |
 | `strategy` | groups legs into a strategy (e.g. `Bund-BTP 10Y`) |
