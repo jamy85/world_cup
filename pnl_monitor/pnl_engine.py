@@ -119,33 +119,53 @@ def _has_yellow_key(id_str: str) -> bool:
     return len(parts) >= 2 and parts[-1].upper() in YELLOW_KEYS
 
 
+def _num(x):
+    """Coerce to float, returning None for non-numeric or NaN (e.g. 'varies')."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v else None  # reject NaN
+
+
 def build_instruments(trades, provided, provider, defaults):
-    """Return ``(instruments_df, inferred_ids)`` covering every traded id.
+    """Return ``(instruments_df, info)`` covering every traded id.
 
     Ids present in ``provided`` (the instruments file) are used as-is. Ids not
     found there are auto-resolved from ``defaults`` — and, when the provider is
     a live Bloomberg session, enriched with real currency (``CRNCY``) and
-    futures multiplier (``FUT_VAL_PT``). ``inferred_ids`` lists what was guessed
-    so the UI can warn that those numbers rely on defaults / Bloomberg.
+    futures multiplier (``FUT_VAL_PT``). Non-numeric multipliers (Bloomberg
+    returns ``'varies'`` for some contracts) or missing values fall back to the
+    default multiplier instead of crashing.
+
+    ``info`` is ``{"inferred": [...], "no_multiplier": [...]}``:
+      * ``inferred`` — ids whose metadata came from defaults/Bloomberg, not the file.
+      * ``no_multiplier`` — ids where a numeric multiplier couldn't be determined
+        and the default was used (set ``point_value`` manually for accurate P&L).
     """
     ids = sorted(trades["id"].unique())
     suffix = defaults.get("bbg_suffix", "")
-    rows, inferred = [], []
+    default_ac = defaults.get("default_asset_class", "future")
+    rows, inferred, no_multiplier = [], [], []
+
     for _id in ids:
         if provided is not None and _id in provided.index:
             m = provided.loc[_id]
-            rows.append({
-                "id": _id, "bbg_ticker": m["bbg_ticker"],
-                "asset_class": str(m["asset_class"]).lower(),
-                "currency": str(m["currency"]).upper(),
-                "point_value": float(m["point_value"]),
-            })
+            ac = str(m["asset_class"]).lower()
+            ccy = str(m["currency"]).upper()
+            pv = _num(m["point_value"])
+            if pv is None:  # blank / 'varies' in the file
+                pv = 0.01 if ac == "bond" else float(defaults.get("default_point_value", 1000.0))
+                no_multiplier.append(_id)
+            rows.append({"id": _id, "bbg_ticker": m["bbg_ticker"],
+                         "asset_class": ac, "currency": ccy, "point_value": pv})
             continue
 
-        ac = defaults.get("default_asset_class", "future")
+        ac = default_ac
         bbg = _id if (_has_yellow_key(_id) or not suffix) else f"{_id} {suffix}"
         ccy = defaults.get("default_currency", "USD")
         pv = 0.01 if ac == "bond" else float(defaults.get("default_point_value", 1000.0))
+        pv_from_bbg = False
 
         if getattr(provider, "is_live", False):
             try:
@@ -154,14 +174,19 @@ def build_instruments(trades, provided, provider, defaults):
                 ref = {}
             if ref.get("CRNCY"):
                 ccy = str(ref["CRNCY"]).upper()
-            if ac != "bond" and ref.get("FUT_VAL_PT"):
-                pv = float(ref["FUT_VAL_PT"])
+            if ac != "bond":
+                fv = _num(ref.get("FUT_VAL_PT"))
+                if fv is not None:
+                    pv, pv_from_bbg = fv, True
 
         rows.append({"id": _id, "bbg_ticker": bbg, "asset_class": ac,
                      "currency": ccy, "point_value": pv})
         inferred.append(_id)
+        if ac != "bond" and not pv_from_bbg:
+            no_multiplier.append(_id)
 
-    return pd.DataFrame(rows).set_index("id"), inferred
+    info = {"inferred": inferred, "no_multiplier": no_multiplier}
+    return pd.DataFrame(rows).set_index("id"), info
 
 
 # ---------------------------------------------------------------------------

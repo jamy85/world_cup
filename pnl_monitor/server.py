@@ -53,23 +53,31 @@ def server(input, output, session):
         provider, warning = providers.get_provider(prefer_bloomberg=input.use_bbg())
         start = None if input.from_first_trade() else input.start()
         try:
-            instruments, inferred = eng.build_instruments(trades, provided, provider, cfg)
+            instruments, info = eng.build_instruments(trades, provided, provider, cfg)
             attr = eng.compute_attribution(trades, instruments, provider, input.end(), start)
         except Exception as exc:
             return {"error": f"P&L computation failed: {exc}", "cfg": cfg,
                     "provider": provider, "warning": warning}
 
+        notes = []
+        inferred, no_mult = info["inferred"], info["no_multiplier"]
         if inferred:
             src = "Bloomberg" if provider.is_live else "portfolio defaults"
-            note = (
+            notes.append(
                 f"Auto-resolved {len(inferred)} ticker(s) not in the instruments "
-                f"file (currency & point_value from {src}): "
-                f"{', '.join(inferred[:8])}{'…' if len(inferred) > 8 else ''}. "
+                f"file (currency from {src}): "
+                f"{', '.join(inferred[:8])}{'…' if len(inferred) > 8 else ''}."
             )
-            if not provider.is_live:
-                note += ("These use placeholder currency/point_value — add rows to "
-                         "the instruments file, or run against Bloomberg for exact values.")
-            warning = (warning + "  " if warning else "") + note
+        if no_mult:
+            notes.append(
+                f"Using the default multiplier for {len(no_mult)} ticker(s) with no "
+                f"numeric point_value "
+                f"(Bloomberg FUT_VAL_PT was blank/'varies'): "
+                f"{', '.join(no_mult[:8])}{'…' if len(no_mult) > 8 else ''}. "
+                f"Set point_value in the instruments file for accurate P&L."
+            )
+        if notes:
+            warning = "  ".join(([warning] if warning else []) + notes)
 
         ccy = input.ccy() if cfg["multi_ccy"] else "usd"
         return {
