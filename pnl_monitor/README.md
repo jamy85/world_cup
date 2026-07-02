@@ -7,8 +7,9 @@ spread (price) attribution**. Prices and FX come from a local **Bloomberg
 Terminal** (Desktop API), with a deterministic **mock** fallback so the app runs
 anywhere.
 
-The UI (`app.py`) is fully separated from the compute engine (`pnl_engine.py`)
-and data layer (`providers.py`), so you can restyle or extend it freely.
+The layout (`ui.py`), reactive logic (`server.py`) and shared settings
+(`config.py`) are separated from the compute engine (`pnl_engine.py`) and data
+layer (`providers.py`), so you can restyle, extend, or add portfolios freely.
 
 * **Futures portfolio** — futures in various currencies, reported in **USD**.
 * **Cash-bond portfolio** — EUR government bonds, typically **spread trades**
@@ -58,8 +59,8 @@ works in both Community and Professional.
 
 | column | meaning |
 |---|---|
-| `trade_date` | trade date (YYYY-MM-DD) |
 | `id` | instrument key — Bloomberg ticker or ISIN; matches the reference file |
+| `trade_date` | trade date (YYYY-MM-DD) |
 | `quantity` | face value (bonds) or # contracts (futures); **negative = short** |
 | `trade_price` | execution price (bonds: clean price; futures: futures price) |
 | `strategy` | groups legs into a strategy (e.g. `Bund-BTP 10Y`) |
@@ -110,7 +111,10 @@ portfolio toggles EUR/USD.
 
 ## Files
 
-- `app.py` — Shiny for Python UI (reactive; portfolio selector, currency toggle, charts)
+- `app.py` — thin entrypoint: wires UI + server, IDE Run block
+- `ui.py` — Shiny layout (inputs/outputs)
+- `server.py` — reactive logic (loads data, runs engine, renders outputs)
+- `config.py` — portfolios, colours, shared settings (add a portfolio here)
 - `pnl_engine.py` — blotter → daily attribution + aggregations
 - `providers.py` — `BloombergProvider` (live) and `MockProvider` (fallback)
 - `trades_futures.csv` / `instruments_futures.csv` — sample futures book
