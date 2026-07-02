@@ -1,15 +1,23 @@
-"""Price providers for the P&L monitor.
+"""Price / FX providers for the P&L monitor.
 
 Two backends implement the same interface:
 
 * ``BloombergProvider`` — talks to a **local Bloomberg Terminal** via the Desktop
-  API (``blpapi``). It connects to ``localhost:8194`` and therefore only works on
-  a machine where the Terminal is installed and logged in.
-* ``MockProvider`` — deterministic synthetic prices so the app (and the P&L
-  engine) can run anywhere, including CI or a cloud dev box with no Terminal.
+  API (``blpapi``), connecting to ``localhost:8194``. Only works on a machine
+  where the Terminal is installed and logged in.
+* ``MockProvider`` — deterministic synthetic clean prices, accrued interest and
+  FX so the whole app and attribution engine run anywhere (no Terminal needed).
 
-``get_provider()`` returns whichever one is usable, so the app degrades
-gracefully instead of crashing when Bloomberg is absent.
+``get_provider()`` returns whichever is usable so the app degrades gracefully.
+
+Interface (dates are ``datetime.date``):
+
+* ``price_series(fields_by_ticker, start, end)``
+    ``fields_by_ticker``: ``{ticker: [field, ...]}`` (e.g. bonds need
+    ``["PX_LAST", "INT_ACC"]``, futures ``["PX_LAST"]``).
+    Returns ``{ticker: {field: {date: value}}}`` — daily, trading days only.
+* ``fx_to_usd_series(currencies, start, end)``
+    Returns ``{ccy: {date: rate_to_usd}}`` where value × local = USD. USD -> 1.0.
 """
 
 from __future__ import annotations
@@ -17,101 +25,110 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import math
-from typing import Dict, Iterable, Mapping, Tuple
+from typing import Dict, List, Mapping, Tuple
 
 
 class PriceProvider:
-    """Interface shared by the real and mock backends."""
-
-    #: Human-readable name shown in the UI.
     name = "abstract"
-    #: Whether this is a live market-data connection.
     is_live = False
 
-    def spot(self, fields: Mapping[str, str]) -> Dict[str, float]:
-        """Return the latest price for each ``{ticker: field}`` entry."""
+    def price_series(self, fields_by_ticker, start, end):
         raise NotImplementedError
 
-    def historical(
-        self,
-        fields: Mapping[str, str],
-        start: dt.date,
-        end: dt.date,
-    ) -> Dict[str, Dict[dt.date, float]]:
-        """Return a daily price series per ticker over ``[start, end]``.
-
-        Missing days (weekends/holidays) simply do not appear in the series;
-        callers pick the last observation on or before the date they want.
-        """
+    def fx_to_usd_series(self, currencies, start, end):
         raise NotImplementedError
 
     # -- shared helper -----------------------------------------------------
-    def price_on_or_before(
-        self,
-        series: Mapping[dt.date, float],
-        target: dt.date,
-    ) -> Tuple[dt.date, float] | Tuple[None, None]:
-        """Last available observation on or before ``target``."""
+    @staticmethod
+    def value_on_or_before(series: Mapping[dt.date, float], target: dt.date):
+        """Last observation on or before ``target`` (handles weekends/holidays)."""
         candidates = [d for d in series if d <= target]
         if not candidates:
-            return None, None
-        d = max(candidates)
-        return d, series[d]
+            return None
+        return series[max(candidates)]
 
 
 # ---------------------------------------------------------------------------
 # Mock backend
 # ---------------------------------------------------------------------------
-class MockProvider(PriceProvider):
-    """Deterministic pseudo-prices, seeded by ticker, drifting smoothly by date.
+# Rough FX levels (units of USD per 1 unit of currency), drifting by date.
+_FX_BASE = {
+    "USD": 1.0,
+    "EUR": 1.07,
+    "GBP": 1.27,
+    "JPY": 0.0066,
+    "AUD": 0.66,
+    "CAD": 0.73,
+    "CHF": 1.12,
+}
 
-    The same (ticker, date) always yields the same price, so P&L numbers are
-    stable across runs and reviewable in tests. Bonds land roughly in the
-    95-108 range and futures in the 105-135 range based on a rough guess from
-    the ticker's yellow key.
-    """
+
+class MockProvider(PriceProvider):
+    """Deterministic pseudo-market-data seeded by ticker, drifting by date."""
 
     name = "Mock (synthetic prices — NOT market data)"
     is_live = False
 
     @staticmethod
-    def _seed(ticker: str) -> int:
-        return int(hashlib.md5(ticker.encode()).hexdigest(), 16)
+    def _seed(key: str) -> int:
+        return int(hashlib.md5(key.encode()).hexdigest(), 16)
 
-    def _price(self, ticker: str, date: dt.date) -> float:
+    def _clean_price(self, ticker: str, date: dt.date) -> float:
         seed = self._seed(ticker)
-        # Rough base level by instrument type.
         upper = ticker.upper()
-        if "COMDTY" in upper or "INDEX" in upper or "CURNCY" in upper:
-            base = 105.0 + (seed % 3000) / 100.0          # ~105 .. 135
+        if "COMDTY" in upper or "INDEX" in upper:
+            base = 105.0 + (seed % 4000) / 100.0        # futures ~105 .. 145
         else:
-            base = 95.0 + (seed % 1300) / 100.0           # ~95 .. 108 (bonds)
-        # Smooth, deterministic drift so historical != spot.
+            base = 95.0 + (seed % 1200) / 100.0         # bonds ~95 .. 107
         n = date.toordinal()
         phase = (seed % 360) * math.pi / 180.0
-        drift = 1.4 * math.sin(n / 23.0 + phase) + 0.9 * math.sin(n / 7.0 + phase)
-        wiggle = ((seed >> 8) % 17 - 8) * 0.01 * ((n % 11) - 5)
-        return round(base + drift + wiggle, 4)
+        drift = 1.3 * math.sin(n / 23.0 + phase) + 0.8 * math.sin(n / 6.0 + phase)
+        return round(base + drift, 4)
 
-    def spot(self, fields: Mapping[str, str]) -> Dict[str, float]:
-        today = _today()
-        return {t: self._price(t, today) for t in fields}
+    def _accrued(self, ticker: str, date: dt.date) -> float:
+        """Accrued interest per 100, ramping over a semiannual period then resetting."""
+        seed = self._seed(ticker + "|cpn")
+        coupon = 0.5 + (seed % 400) / 100.0             # 0.5% .. 4.5%
+        period = 182
+        offset = seed % period
+        day_in_period = (date.toordinal() - offset) % period
+        return round((coupon / 2.0) * (day_in_period / period), 6)
 
-    def historical(
-        self,
-        fields: Mapping[str, str],
-        start: dt.date,
-        end: dt.date,
-    ) -> Dict[str, Dict[dt.date, float]]:
+    def price_series(self, fields_by_ticker, start, end):
+        out: Dict[str, Dict[str, Dict[dt.date, float]]] = {}
+        for ticker, fields in fields_by_ticker.items():
+            by_field: Dict[str, Dict[dt.date, float]] = {f: {} for f in fields}
+            d = start
+            while d <= end:
+                if d.weekday() < 5:
+                    for f in fields:
+                        if f == "INT_ACC":
+                            by_field[f][d] = self._accrued(ticker, d)
+                        else:
+                            by_field[f][d] = self._clean_price(ticker, d)
+                d += dt.timedelta(days=1)
+            out[ticker] = by_field
+        return out
+
+    def _fx(self, ccy: str, date: dt.date) -> float:
+        base = _FX_BASE.get(ccy.upper(), 1.0)
+        if ccy.upper() == "USD":
+            return 1.0
+        seed = self._seed("FX|" + ccy.upper())
+        n = date.toordinal()
+        drift = 1.0 + 0.02 * math.sin(n / 40.0 + (seed % 100) / 100.0)
+        return round(base * drift, 6)
+
+    def fx_to_usd_series(self, currencies, start, end):
         out: Dict[str, Dict[dt.date, float]] = {}
-        for ticker in fields:
+        for ccy in currencies:
             series: Dict[dt.date, float] = {}
             d = start
             while d <= end:
-                if d.weekday() < 5:  # weekdays only, like a real price series
-                    series[d] = self._price(ticker, d)
+                if d.weekday() < 5:
+                    series[d] = self._fx(ccy, d)
                 d += dt.timedelta(days=1)
-            out[ticker] = series
+            out[ccy.upper()] = series
         return out
 
 
@@ -119,20 +136,13 @@ class MockProvider(PriceProvider):
 # Bloomberg backend (Desktop API)
 # ---------------------------------------------------------------------------
 class BloombergProvider(PriceProvider):
-    """Live prices from a local Bloomberg Terminal via ``blpapi``.
-
-    Requires:
-      * a logged-in Bloomberg Terminal on this machine, and
-      * ``pip install blpapi`` (from the Bloomberg-hosted index — see README).
-
-    Connects to the Desktop API service ``//blp/refdata`` on localhost:8194.
-    """
+    """Live data from a local Bloomberg Terminal via ``blpapi`` (localhost:8194)."""
 
     name = "Bloomberg Terminal (Desktop API)"
     is_live = True
 
     def __init__(self, host: str = "localhost", port: int = 8194):
-        import blpapi  # imported lazily so the module loads without it
+        import blpapi
 
         self._blpapi = blpapi
         opts = blpapi.SessionOptions()
@@ -148,9 +158,7 @@ class BloombergProvider(PriceProvider):
             raise ConnectionError("Could not open //blp/refdata service.")
         self._svc = self._session.getService("//blp/refdata")
 
-    # -- request plumbing --------------------------------------------------
     def _drain(self):
-        """Yield final RESPONSE messages for the pending request."""
         blpapi = self._blpapi
         while True:
             ev = self._session.nextEvent(500)
@@ -163,78 +171,73 @@ class BloombergProvider(PriceProvider):
                 if ev.eventType() == blpapi.Event.RESPONSE:
                     break
 
-    def spot(self, fields: Mapping[str, str]) -> Dict[str, float]:
-        # Group tickers by the field they need so we send one request per field.
-        by_field: Dict[str, list] = {}
-        for ticker, field in fields.items():
-            by_field.setdefault(field, []).append(ticker)
+    def _historical(self, tickers: List[str], fields: List[str], start, end):
+        """One HistoricalDataRequest for a set of tickers sharing the same fields."""
+        req = self._svc.createRequest("HistoricalDataRequest")
+        for t in tickers:
+            req.append("securities", t)
+        for f in fields:
+            req.append("fields", f)
+        req.set("startDate", start.strftime("%Y%m%d"))
+        req.set("endDate", end.strftime("%Y%m%d"))
+        req.set("periodicitySelection", "DAILY")
+        req.set("nonTradingDayFillOption", "ACTIVE_DAYS_ONLY")
+        self._session.sendRequest(req)
 
-        out: Dict[str, float] = {}
-        for field, tickers in by_field.items():
-            req = self._svc.createRequest("ReferenceDataRequest")
-            for t in tickers:
-                req.append("securities", t)
-            req.append("fields", field)
-            self._session.sendRequest(req)
-            for msg in self._drain():
-                data = msg.getElement("securityData")
-                for i in range(data.numValues()):
-                    sec = data.getValueAsElement(i)
-                    ticker = sec.getElementAsString("security")
-                    fd = sec.getElement("fieldData")
-                    if fd.hasElement(field):
-                        out[ticker] = fd.getElementAsFloat(field)
+        result: Dict[str, Dict[str, Dict[dt.date, float]]] = {}
+        for msg in self._drain():
+            sec = msg.getElement("securityData")
+            ticker = sec.getElementAsString("security")
+            per_field = result.setdefault(ticker, {f: {} for f in fields})
+            fdarr = sec.getElement("fieldData")
+            for i in range(fdarr.numValues()):
+                row = fdarr.getValueAsElement(i)
+                d = row.getElementAsDatetime("date")
+                day = dt.date(d.year, d.month, d.day)
+                for f in fields:
+                    if row.hasElement(f):
+                        per_field[f][day] = row.getElementAsFloat(f)
+        return result
+
+    def price_series(self, fields_by_ticker, start, end):
+        # Group tickers by identical field sets to minimise requests.
+        groups: Dict[Tuple[str, ...], List[str]] = {}
+        for ticker, fields in fields_by_ticker.items():
+            groups.setdefault(tuple(fields), []).append(ticker)
+        out: Dict[str, Dict[str, Dict[dt.date, float]]] = {}
+        for fields, tickers in groups.items():
+            out.update(self._historical(tickers, list(fields), start, end))
         return out
 
-    def historical(
-        self,
-        fields: Mapping[str, str],
-        start: dt.date,
-        end: dt.date,
-    ) -> Dict[str, Dict[dt.date, float]]:
-        by_field: Dict[str, list] = {}
-        for ticker, field in fields.items():
-            by_field.setdefault(field, []).append(ticker)
-
+    def fx_to_usd_series(self, currencies, start, end):
         out: Dict[str, Dict[dt.date, float]] = {}
-        for field, tickers in by_field.items():
-            req = self._svc.createRequest("HistoricalDataRequest")
-            for t in tickers:
-                req.append("securities", t)
-            req.append("fields", field)
-            req.set("startDate", start.strftime("%Y%m%d"))
-            req.set("endDate", end.strftime("%Y%m%d"))
-            req.set("periodicitySelection", "DAILY")
-            req.set("nonTradingDayFillOption", "ACTIVE_DAYS_ONLY")
-            self._session.sendRequest(req)
-            for msg in self._drain():
-                sec = msg.getElement("securityData")
-                ticker = sec.getElementAsString("security")
-                series = out.setdefault(ticker, {})
-                fdarr = sec.getElement("fieldData")
-                for i in range(fdarr.numValues()):
-                    row = fdarr.getValueAsElement(i)
-                    d = row.getElementAsDatetime("date")
-                    if row.hasElement(field):
-                        series[dt.date(d.year, d.month, d.day)] = (
-                            row.getElementAsFloat(field)
-                        )
+        pairs = {}
+        for ccy in currencies:
+            u = ccy.upper()
+            if u == "USD":
+                continue
+            pairs[f"{u}USD Curncy"] = u
+        if pairs:
+            hist = self._historical(list(pairs), ["PX_LAST"], start, end)
+            for tick, u in pairs.items():
+                out[u] = hist.get(tick, {}).get("PX_LAST", {})
+        # USD is identity across the whole window.
+        if any(c.upper() == "USD" for c in currencies):
+            d = start
+            usd = {}
+            while d <= end:
+                if d.weekday() < 5:
+                    usd[d] = 1.0
+                d += dt.timedelta(days=1)
+            out["USD"] = usd
         return out
 
 
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
-def _today() -> dt.date:
-    return dt.date.today()
-
-
-def get_provider(prefer_bloomberg: bool = True) -> Tuple[PriceProvider, str | None]:
-    """Return ``(provider, warning)``.
-
-    Tries Bloomberg first when ``prefer_bloomberg`` is set; falls back to the
-    mock provider with a warning string explaining why.
-    """
+def get_provider(prefer_bloomberg: bool = True):
+    """Return ``(provider, warning_or_None)``."""
     if prefer_bloomberg:
         try:
             return BloombergProvider(), None

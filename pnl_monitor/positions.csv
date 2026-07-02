@@ -1,8 +1,0 @@
-ticker,name,asset_class,quantity,point_value,currency,price_field
-US912810TL45 Govt,US Treasury 30Y Bond,bond,5000000,0.01,USD,
-US91282CJL57 Govt,US Treasury 10Y Note,bond,10000000,0.01,USD,
-SIGB 3.25 09/01/35 Govt,SGS 10Y Bond,bond,8000000,0.01,SGD,
-TYU6 Comdty,10Y US T-Note Future Sep26,future,-50,1000,USD,
-RXU6 Comdty,Euro-Bund Future Sep26,future,25,1000,EUR,
-FVU6 Comdty,5Y US T-Note Future Sep26,future,40,1000,USD,
-TYU6C 112 Comdty,10Y Note Future Call 112,option,20,1000,USD,

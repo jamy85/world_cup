@@ -1,18 +1,22 @@
 # Daily P&L Monitor
 
-A locally-hosted Streamlit app that marks a bond/derivatives book to market and
-shows P&L over flexible windows — **financial YTD (from 1 April), calendar YTD,
-month-to-date, and a user-selected reference date**. Prices come from your local
-**Bloomberg Terminal** via the Desktop API, with a synthetic **mock** fallback
-so the app runs even without a Terminal.
+A locally-hosted Streamlit app that computes a **trade-blotter-driven P&L time
+series** for two portfolios, with **carry vs. spread (price) attribution**.
+Prices and FX come from a local **Bloomberg Terminal** (Desktop API), with a
+deterministic **mock** fallback so the app runs anywhere.
+
+* **Futures portfolio** — futures in various currencies, reported in **USD**.
+* **Cash-bond portfolio** — EUR government bonds, typically **spread trades**
+  (long one bond / short another), reported in **EUR or USD**, with **carry**
+  and **spread compression** shown separately per strategy.
 
 ## Why it must run locally (and can't fetch Bloomberg from the cloud)
 
-Bloomberg market data isn't a public REST API. The `blpapi` Desktop API library
-connects to a **Bloomberg Terminal running on the same machine** (`localhost:8194`)
-and requires a live, logged-in Terminal session with a valid entitlement. So the
-app has to run on your Bloomberg-connected desktop. A cloud/CI box has no Terminal
-and will always fall back to mock prices — that's expected.
+Bloomberg market data isn't a public REST API. The `blpapi` Desktop API connects
+to a **Bloomberg Terminal running on the same machine** (`localhost:8194`) and
+needs a live, logged-in session with a valid entitlement. So the app runs on
+your Bloomberg desktop; a cloud/CI box has no Terminal and falls back to mock
+prices — that's expected.
 
 ## Setup (on your Bloomberg machine)
 
@@ -20,77 +24,75 @@ and will always fall back to mock prices — that's expected.
 cd pnl_monitor
 python -m venv .venv && . .venv/Scripts/activate      # or source .venv/bin/activate
 pip install -r requirements.txt
-
 # Bloomberg Desktop API (only works with a running Terminal):
 pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ blpapi
+
+streamlit run pnl_app.py       # with the Terminal open + logged in
 ```
 
-Then, with the Terminal open and logged in:
+Open http://localhost:8501. The header shows **🟢 LIVE** (Bloomberg) or
+**🟡 MOCK** (synthetic prices).
 
-```bash
-streamlit run pnl_app.py
-```
+## Inputs — two CSVs per portfolio
 
-Open http://localhost:8501. The header shows **🟢 LIVE** when connected to
-Bloomberg or **🟡 MOCK** when using synthetic prices.
+### 1. Trade blotter (`trades_*.csv`) — drives the P&L time series
 
-## Positions file (`positions.csv`)
-
-| column | required | meaning |
-|---|---|---|
-| `ticker` | yes | Bloomberg ticker incl. yellow key, e.g. `TYU6 Comdty`, `US91282CJL57 Govt` |
-| `asset_class` | yes | `bond`, `future`, `option`, or `swap` — picks the default price field |
-| `quantity` | yes | face value for bonds; number of contracts for futures/options (negative = short) |
-| `point_value` | yes | currency P&L per **1.0** move in the quoted price, per unit of quantity |
-| `name` | no | display label |
-| `currency` | no | shown only (no FX conversion — see limitations) |
-| `price_field` | no | override the Bloomberg field for this row |
-
-### Setting `point_value`
-
-The P&L formula is one line:
-
-```
-pnl = quantity × point_value × (price_today − price_reference)
-```
-
-- **Bond** quoted per 100, `quantity` = face value → `point_value = 0.01`
-  (1-pt move on 1,000,000 face = `1,000,000 × 0.01 × 1 = 10,000`).
-- **Future/option**, `quantity` = # contracts → `point_value` = contract multiplier
-  (e.g. 10Y T-Note future = `1000`).
-
-## How the windows work
-
-Each window compares today's price to the **close on the day before the period
-starts**, resolved to the nearest business day on or before that date:
-
-| Window | Reference (today = 2 Jul 2026) |
+| column | meaning |
 |---|---|
-| FYTD | 31 Mar 2026 (day before 1 Apr FY start; FY start is configurable) |
-| CYTD | 31 Dec 2025 |
-| MTD | 30 Jun 2026 (prior month-end) |
-| Custom | close on the date you pick in the sidebar |
+| `trade_date` | trade date (YYYY-MM-DD) |
+| `id` | instrument key — Bloomberg ticker or ISIN; matches the reference file |
+| `quantity` | face value (bonds) or # contracts (futures); **negative = short** |
+| `trade_price` | execution price (bonds: clean price; futures: futures price) |
+| `strategy` | groups legs into a strategy (e.g. `Bund-BTP 10Y`) |
 
-## Price fields
+Positions are rebuilt cumulatively from the blotter, so P&L is **trade-date
+aware** — no static snapshot assumption.
 
-- Bonds default to `PX_DIRTY_MID` so daily P&L includes accrued/carry.
-- Futures/options/swaps default to `PX_LAST`.
-- Override per row via the `price_field` column.
+### 2. Instrument reference (`instruments_*.csv`) — static data
 
-## Limitations (by design)
+| column | meaning |
+|---|---|
+| `id` | matches the blotter `id` |
+| `bbg_ticker` | Bloomberg ticker incl. yellow key (e.g. `TYU6 Comdty`, `DE0001102606 Govt`) |
+| `asset_class` | `bond` or `future` (bonds get carry attribution) |
+| `currency` | quote currency (`USD`, `EUR`, `JPY`, …) — used for FX conversion |
+| `point_value` | currency P&L per 1.0 price move per unit of quantity |
 
-- **Snapshot, not trade-aware.** P&L marks *today's* positions over the window
-  and ignores buys/sells made within the window. Trade-aware P&L needs a
-  position time series, not just a snapshot.
-- **No FX conversion.** P&L is reported in each instrument's own quote currency;
-  the total sums raw numbers. Add an FX step if your book is multi-currency.
-- **Historical dirty prices.** Some venues/tickers don't serve `PX_DIRTY`
-  historically; if a reference mark is missing, that window shows blank for the
-  row. Override `price_field` to `PX_LAST` if needed.
+**`point_value`:** bonds quoted per 100 with `quantity` = face → `0.01`
+(1 clean point on 1,000,000 face = 10,000). Futures → contract multiplier
+(e.g. 10Y T-Note = `1000`).
+
+## P&L attribution
+
+Daily price P&L per instrument (previous trading day *p*):
+
+```
+pos_before × pv × (mark_t − mark_p)  +  Σ_trades_today qty × pv × (mark_t − trade_price)
+```
+
+- **Spread / price P&L** — from the **clean price** move. For a long/short spread
+  trade, the net of the two legs *is* the spread compression.
+- **Carry P&L** (bonds only) — `pos × pv × Δ accrued interest` (`INT_ACC`), with a
+  coupon-payment reset so daily carry stays ≈ one day's accrual across coupons.
+- **Futures carry** is embedded in the price (roll) and is **not** separated —
+  that portfolio shows price P&L only.
+
+**FX:** each day's local P&L is converted to USD at that day's rate
+(`<CCY>USD Curncy`) and summed. The futures portfolio reports USD; the bond
+portfolio toggles EUR/USD.
+
+## Limitations
+
+- Futures carry/roll is not separately attributed (shown within price).
+- FX conversion of a daily P&L flow uses that day's rate (standard convention);
+  it is not a full multi-currency return decomposition.
+- Carry uses Bloomberg `INT_ACC`; if a bond doesn't serve accrued historically,
+  that day's carry is treated as zero (price P&L is unaffected).
 
 ## Files
 
-- `pnl_app.py` — Streamlit UI
-- `pnl_engine.py` — windows + P&L math
+- `pnl_app.py` — Streamlit UI (portfolio selector, currency toggle, charts)
+- `pnl_engine.py` — blotter → daily attribution + aggregations
 - `providers.py` — `BloombergProvider` (live) and `MockProvider` (fallback)
-- `positions.csv` — sample book (edit with your own positions)
+- `trades_futures.csv` / `instruments_futures.csv` — sample futures book
+- `trades_bonds.csv` / `instruments_bonds.csv` — sample EUR bond spread book

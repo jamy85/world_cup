@@ -1,0 +1,8 @@
+trade_date,id,quantity,trade_price,strategy
+2026-01-05,TYU6 Comdty,-50,110.50,US 5s10s
+2026-01-05,FVU6 Comdty,80,108.20,US 5s10s
+2026-01-20,RXU6 Comdty,25,133.10,Bund-BTP
+2026-01-20,IKU6 Comdty,-25,118.40,Bund-BTP
+2026-02-10,FVU6 Comdty,-30,108.60,US 5s10s
+2026-02-16,JBU6 Comdty,10,144.00,JGB outright
+2026-03-15,RXU6 Comdty,10,134.20,Bund-BTP

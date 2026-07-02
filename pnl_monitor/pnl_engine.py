@@ -1,184 +1,247 @@
-"""P&L computation over flexible windows.
+"""Trade-blotter-driven P&L time series with carry / price attribution.
 
-The book is marked to market on the *current* set of positions and compared
-against the price on each window's reference date. This is a price-only
-"mark-over-window" P&L on today's holdings — it deliberately ignores
-intra-period trades (buys/sells within the window), which is the standard
-quick desk view for a static position snapshot. If you need trade-aware P&L,
-that requires a position time series, not just a snapshot.
+Given a trade blotter and an instrument reference, this rebuilds daily
+positions and computes, for every trading day, each instrument's:
 
-Formula per position, per window::
+* **price P&L** — mark-to-market on the clean price (for a bond spread trade,
+  the net of the long/short legs' clean moves is the *spread compression*), and
+* **carry P&L** — accrual earned by holding the bond overnight (bonds only;
+  futures carry is embedded in the price and is not separated here).
 
-    pnl = quantity * point_value * (price_today - price_reference)
+Daily price P&L per instrument on day *t* (previous trading day *p*)::
 
-``point_value`` is the currency P&L per 1.0 move in the quoted price per unit
-of ``quantity``. Set it per instrument in the positions CSV:
+    pos_before * pv * (mark_t - mark_p)                      # holding the prior book
+      + Σ_trades_today  qty * pv * (mark_t - trade_price)    # trades done today
 
-* Bond quoted per 100, quantity = face value  ->  point_value = 0.01
-  (a 1-point price move on 1,000,000 face = 1,000,000 * 0.01 * 1 = 10,000)
-* Future, quantity = # contracts             ->  point_value = contract multiplier
-  (e.g. 10Y note future = 1000 -> 1 pt move * 1 contract = 1000)
+Daily carry P&L (bonds)::
+
+    pos_after * pv * carry_per_100_t
+
+where ``carry_per_100_t`` is the day's accrual (Δ accrued interest), with a
+coupon-payment reset so it stays ≈ one day's accrual across coupon dates.
+
+Conventions
+-----------
+* Bond: ``quantity`` = face value, ``point_value`` = 0.01 (1 clean point on
+  1,000,000 face = 10,000). ``mark`` = clean price; accrued from ``INT_ACC``.
+* Future: ``quantity`` = # contracts, ``point_value`` = contract multiplier.
+  ``mark`` = ``PX_LAST``. No separate carry.
+
+Each day's local P&L is converted to USD at that day's FX rate and summed.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
-from typing import Dict, List, Mapping
+from typing import Dict, List
 
 import pandas as pd
 
-# Default Bloomberg fields by asset class. Bonds use the dirty (full) price so
-# daily P&L captures carry/accrued; everything else uses last price.
-DEFAULT_FIELD = {
-    "bond": "PX_DIRTY_MID",
-    "future": "PX_LAST",
-    "option": "PX_LAST",
-    "swap": "PX_LAST",
-}
-FALLBACK_FIELD = "PX_LAST"
+TRADE_COLUMNS = ["trade_date", "id", "quantity", "trade_price", "strategy"]
+INSTRUMENT_COLUMNS = ["id", "bbg_ticker", "asset_class", "currency", "point_value"]
 
-REQUIRED_COLUMNS = ["ticker", "asset_class", "quantity", "point_value"]
+CLEAN_FIELD = "PX_LAST"
+ACCRUED_FIELD = "INT_ACC"
 
 
-def load_positions(path: str) -> pd.DataFrame:
-    """Read and validate the positions CSV."""
-    df = pd.read_csv(path)
+# ---------------------------------------------------------------------------
+# Loading / validation
+# ---------------------------------------------------------------------------
+def _norm_cols(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [c.strip().lower() for c in df.columns]
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"positions file is missing required columns: {missing}. "
-            f"Required: {REQUIRED_COLUMNS}"
-        )
-    df["ticker"] = df["ticker"].astype(str).str.strip()
-    df["asset_class"] = df["asset_class"].astype(str).str.strip().str.lower()
-    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
-    df["point_value"] = pd.to_numeric(df["point_value"], errors="coerce")
-    if "name" not in df.columns:
-        df["name"] = df["ticker"]
-    if "currency" not in df.columns:
-        df["currency"] = ""
-    # Optional explicit price field per row; otherwise inferred by asset class.
-    if "price_field" not in df.columns:
-        df["price_field"] = ""
-    df["price_field"] = df["price_field"].fillna("").astype(str).str.strip()
-    bad = df[df["quantity"].isna() | df["point_value"].isna()]
-    if not bad.empty:
-        raise ValueError(
-            "Non-numeric quantity/point_value in rows: "
-            f"{bad['ticker'].tolist()}"
-        )
     return df
 
 
-def field_for(row) -> str:
-    """Bloomberg field to use for a position row."""
-    if row["price_field"]:
-        return row["price_field"]
-    return DEFAULT_FIELD.get(row["asset_class"], FALLBACK_FIELD)
+def load_trades(path_or_buffer) -> pd.DataFrame:
+    df = _norm_cols(pd.read_csv(path_or_buffer))
+    missing = [c for c in TRADE_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"trade blotter missing columns: {missing}")
+    df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
+    df["id"] = df["id"].astype(str).str.strip()
+    df["strategy"] = df["strategy"].astype(str).str.strip()
+    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+    df["trade_price"] = pd.to_numeric(df["trade_price"], errors="coerce")
+    bad = df[df["quantity"].isna() | df["trade_price"].isna()]
+    if not bad.empty:
+        raise ValueError(f"non-numeric quantity/trade_price in rows: {bad.index.tolist()}")
+    return df
 
 
-def field_map(positions: pd.DataFrame) -> Dict[str, str]:
-    """``{ticker: field}`` for the whole book (last field wins on dupes)."""
-    return {row["ticker"]: field_for(row) for _, row in positions.iterrows()}
+def load_instruments(path_or_buffer) -> pd.DataFrame:
+    df = _norm_cols(pd.read_csv(path_or_buffer))
+    missing = [c for c in INSTRUMENT_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"instruments reference missing columns: {missing}")
+    for c in ["id", "bbg_ticker", "asset_class", "currency"]:
+        df[c] = df[c].astype(str).str.strip()
+    df["asset_class"] = df["asset_class"].str.lower()
+    df["currency"] = df["currency"].str.upper()
+    df["point_value"] = pd.to_numeric(df["point_value"], errors="coerce")
+    return df.set_index("id")
 
 
 # ---------------------------------------------------------------------------
-# Reference dates
+# Core computation
 # ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class Window:
-    label: str
-    reference: dt.date  # the close we compare *against*
-    note: str = ""
+def _fields_by_ticker(instruments: pd.DataFrame, ids: List[str]) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    for _id in ids:
+        meta = instruments.loc[_id]
+        bbg = meta["bbg_ticker"]
+        if meta["asset_class"] == "bond":
+            out[bbg] = [CLEAN_FIELD, ACCRUED_FIELD]
+        else:
+            out[bbg] = [CLEAN_FIELD]
+    return out
 
 
-def fy_start(today: dt.date, fy_start_month: int = 4, fy_start_day: int = 1) -> dt.date:
-    """First day of the financial year containing ``today`` (default 1 April)."""
-    this_year = dt.date(today.year, fy_start_month, fy_start_day)
-    return this_year if today >= this_year else dt.date(
-        today.year - 1, fy_start_month, fy_start_day
-    )
+def _carry_per_100(acc_today, acc_prev) -> float:
+    """One day's accrual per 100, robust to coupon-payment resets.
 
-
-def standard_windows(
-    today: dt.date,
-    fy_start_month: int = 4,
-    fy_start_day: int = 1,
-) -> List[Window]:
-    """FYTD, CYTD and MTD windows for ``today``.
-
-    Each reference is the close of the day *before* the period starts, so the
-    P&L captures the move from that starting mark to today.
+    On a normal day this is the accrual increment. On a coupon date accrued
+    drops sharply; we treat that drop as the coupon paid and report ``acc_today``
+    (the fresh period's accrual) so daily carry stays ≈ one day's accrual.
     """
-    fys = fy_start(today, fy_start_month, fy_start_day)
-    fy_ref = fys - dt.timedelta(days=1)                       # e.g. 31 Mar
-    cy_ref = dt.date(today.year - 1, 12, 31)                  # prior year-end
-    mtd_ref = today.replace(day=1) - dt.timedelta(days=1)     # prior month-end
-    return [
-        Window("FYTD", fy_ref, f"since FY start {fys:%d %b %Y}"),
-        Window("CYTD", cy_ref, f"since {cy_ref:%d %b %Y} close"),
-        Window("MTD", mtd_ref, f"since {mtd_ref:%d %b %Y} close"),
-    ]
+    if acc_today is None or acc_prev is None:
+        return 0.0
+    if acc_today >= acc_prev:
+        return acc_today - acc_prev
+    return acc_today  # coupon reset day
 
 
-# ---------------------------------------------------------------------------
-# P&L
-# ---------------------------------------------------------------------------
-def compute_pnl(
-    positions: pd.DataFrame,
+def compute_attribution(
+    trades: pd.DataFrame,
+    instruments: pd.DataFrame,
     provider,
-    windows: List[Window],
-    today: dt.date,
-    history_pad_days: int = 10,
+    end: dt.date,
+    start: dt.date | None = None,
+    pad_days: int = 7,
 ) -> pd.DataFrame:
-    """Return a per-position frame with a P&L column for each window.
+    """Return a long-form daily attribution frame.
 
-    Columns: ticker, name, asset_class, currency, quantity, point_value,
-    price_today, plus ``pnl_<LABEL>`` and ``ref_px_<LABEL>`` per window.
+    Columns: date, id, bbg_ticker, strategy, currency, asset_class,
+    position, price_local, carry_local, total_local, fx,
+    price_usd, carry_usd, total_usd.
     """
-    fmap = field_map(positions)
-    spot = provider.spot(fmap)
+    ids = sorted(trades["id"].unique())
+    unknown = [i for i in ids if i not in instruments.index]
+    if unknown:
+        raise ValueError(f"trades reference unknown instrument ids: {unknown}")
 
-    # One historical pull covering the earliest reference date through today.
-    earliest = min(w.reference for w in windows)
-    hist = provider.historical(
-        fmap,
-        start=earliest - dt.timedelta(days=history_pad_days),
-        end=today,
-    )
+    first_trade = min(trades["trade_date"])
+    if start is None:
+        start = first_trade
+    start = min(start, first_trade)
 
+    fbt = _fields_by_ticker(instruments, ids)
+    px = provider.price_series(fbt, start - dt.timedelta(days=pad_days), end)
+    currencies = sorted(instruments.loc[ids, "currency"].unique())
+    fx = provider.fx_to_usd_series(currencies, start - dt.timedelta(days=pad_days), end)
+
+    # Calendar = sorted union of all clean-price dates within [start, end].
+    all_dates = set()
+    for bbg, fields in px.items():
+        all_dates.update(d for d in fields.get(CLEAN_FIELD, {}) if start <= d <= end)
+    calendar = sorted(all_dates)
+    if not calendar:
+        return pd.DataFrame()
+
+    val = provider.value_on_or_before
     rows = []
-    for _, pos in positions.iterrows():
-        ticker = pos["ticker"]
-        px_today = spot.get(ticker)
-        row = {
-            "ticker": ticker,
-            "name": pos["name"],
-            "asset_class": pos["asset_class"],
-            "currency": pos["currency"],
-            "quantity": pos["quantity"],
-            "point_value": pos["point_value"],
-            "price_today": px_today,
-        }
-        series = hist.get(ticker, {})
-        for w in windows:
-            ref_date, ref_px = provider.price_on_or_before(series, w.reference)
-            if px_today is None or ref_px is None:
-                pnl = None
-            else:
-                pnl = pos["quantity"] * pos["point_value"] * (px_today - ref_px)
-            row[f"ref_px_{w.label}"] = ref_px
-            row[f"ref_date_{w.label}"] = ref_date
-            row[f"pnl_{w.label}"] = pnl
-        rows.append(row)
+    for _id in ids:
+        meta = instruments.loc[_id]
+        bbg = meta["bbg_ticker"]
+        pv = float(meta["point_value"])
+        ccy = meta["currency"]
+        is_bond = meta["asset_class"] == "bond"
+        clean = px[bbg][CLEAN_FIELD]
+        accrued = px[bbg].get(ACCRUED_FIELD, {}) if is_bond else {}
+        fx_ser = fx.get(ccy, {})
+
+        tr = trades[trades["id"] == _id]
+        prev_day = None
+        for day in calendar:
+            pos_before = float(tr.loc[tr["trade_date"] < day, "quantity"].sum())
+            today_tr = tr[tr["trade_date"] == day]
+            pos_after = pos_before + float(today_tr["quantity"].sum())
+
+            mark_t = val(clean, day)
+            mark_p = val(clean, prev_day) if prev_day else None
+
+            price_local = 0.0
+            if mark_t is not None:
+                if mark_p is not None:
+                    price_local += pos_before * pv * (mark_t - mark_p)
+                for _, t in today_tr.iterrows():
+                    price_local += t["quantity"] * pv * (mark_t - t["trade_price"])
+
+            carry_local = 0.0
+            if is_bond:
+                acc_prev = val(accrued, prev_day) if prev_day else None
+                cpp = _carry_per_100(val(accrued, day), acc_prev)
+                carry_local = pos_after * pv * cpp
+
+            fx_rate = val(fx_ser, day)
+            fx_rate = 1.0 if ccy == "USD" else (fx_rate if fx_rate is not None else None)
+
+            total_local = price_local + carry_local
+            rows.append(
+                {
+                    "date": day,
+                    "id": _id,
+                    "bbg_ticker": bbg,
+                    "strategy": tr["strategy"].iloc[0] if not tr.empty else "",
+                    "currency": ccy,
+                    "asset_class": meta["asset_class"],
+                    "position": pos_after,
+                    "price_local": price_local,
+                    "carry_local": carry_local,
+                    "total_local": total_local,
+                    "fx": fx_rate,
+                    "price_usd": price_local * fx_rate if fx_rate is not None else None,
+                    "carry_usd": carry_local * fx_rate if fx_rate is not None else None,
+                    "total_usd": total_local * fx_rate if fx_rate is not None else None,
+                }
+            )
+            prev_day = day
 
     return pd.DataFrame(rows)
 
 
-def totals(pnl_df: pd.DataFrame, windows: List[Window]) -> Dict[str, float]:
-    """Sum each window's P&L across the book (ignoring missing marks)."""
-    return {
-        w.label: float(pnl_df[f"pnl_{w.label}"].dropna().sum()) for w in windows
-    }
+# ---------------------------------------------------------------------------
+# Aggregations for the UI
+# ---------------------------------------------------------------------------
+def daily_totals(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
+    """Portfolio daily & cumulative P&L (price/carry/total) in the chosen ccy."""
+    suffix = "usd" if ccy == "usd" else "local"
+    g = attr.groupby("date")[[f"price_{suffix}", f"carry_{suffix}", f"total_{suffix}"]].sum()
+    g = g.rename(columns={f"price_{suffix}": "price", f"carry_{suffix}": "carry", f"total_{suffix}": "total"})
+    g[["cum_price", "cum_carry", "cum_total"]] = g[["price", "carry", "total"]].cumsum()
+    return g.reset_index()
+
+
+def strategy_breakdown(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
+    """Per-strategy carry vs price (spread compression) totals over the window."""
+    suffix = "usd" if ccy == "usd" else "local"
+    g = attr.groupby("strategy")[[f"price_{suffix}", f"carry_{suffix}", f"total_{suffix}"]].sum()
+    g = g.rename(columns={
+        f"price_{suffix}": "spread_price_pnl",
+        f"carry_{suffix}": "carry_pnl",
+        f"total_{suffix}": "total_pnl",
+    })
+    return g.reset_index().sort_values("total_pnl", ascending=False)
+
+
+def instrument_breakdown(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
+    suffix = "usd" if ccy == "usd" else "local"
+    last_pos = attr.sort_values("date").groupby("id")["position"].last()
+    g = attr.groupby(["strategy", "id", "bbg_ticker", "currency"])[
+        [f"price_{suffix}", f"carry_{suffix}", f"total_{suffix}"]
+    ].sum().rename(columns={
+        f"price_{suffix}": "spread_price_pnl",
+        f"carry_{suffix}": "carry_pnl",
+        f"total_{suffix}": "total_pnl",
+    }).reset_index()
+    g["position"] = g["id"].map(last_pos)
+    return g.sort_values(["strategy", "total_pnl"], ascending=[True, False])
