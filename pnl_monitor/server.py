@@ -55,25 +55,18 @@ def server(input, output, session):
             return {"error": f"P&L computation failed: {exc}", "cfg": cfg,
                     "provider": provider, "warning": warning}
 
-        notes = []
-        inferred, no_mult = info["inferred"], info["no_multiplier"]
-        if inferred:
-            src = "Bloomberg" if provider.is_live else "portfolio defaults"
-            notes.append(
-                f"Auto-resolved {len(inferred)} ticker(s) not in the instruments "
-                f"file (currency from {src}): "
-                f"{', '.join(inferred[:8])}{'…' if len(inferred) > 8 else ''}."
-            )
+        # Resolving metadata from Bloomberg is the normal path, so we don't flag
+        # it. Only warn when a multiplier genuinely couldn't be determined.
+        no_mult = info["no_multiplier"]
         if no_mult:
-            notes.append(
-                f"Using the default multiplier for {len(no_mult)} ticker(s) with no "
-                f"numeric point_value "
-                f"(Bloomberg FUT_VAL_PT was blank/'varies'): "
+            note = (
+                f"⚠️ Couldn't determine a multiplier for {len(no_mult)} ticker(s) "
+                f"(Bloomberg tick fields blank/'varies') — using the portfolio "
+                f"default, so their P&L is approximate: "
                 f"{', '.join(no_mult[:8])}{'…' if len(no_mult) > 8 else ''}. "
-                f"Set point_value in the instruments file for accurate P&L."
+                f"Upload an overrides CSV with a point_value to pin them."
             )
-        if notes:
-            warning = "  ".join(([warning] if warning else []) + notes)
+            warning = "  ".join(([warning] if warning else []) + [note])
 
         ccy = input.ccy() if cfg["multi_ccy"] else "usd"
         return {

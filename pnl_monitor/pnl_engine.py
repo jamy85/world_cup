@@ -300,7 +300,11 @@ def compute_attribution(
 
     val = provider.value_on_or_before
     rows = []
-    for _id in ids:
+    # Position and P&L are tracked per (instrument, strategy) so the same ticker
+    # traded under different strategies keeps separate books and is attributed
+    # correctly. Summing over strategies still reconciles to the portfolio total.
+    combos = list(trades[["id", "strategy"]].drop_duplicates().itertuples(index=False))
+    for _id, strat in combos:
         meta = instruments.loc[_id]
         bbg = meta["bbg_ticker"]
         pv = float(meta["point_value"])
@@ -310,7 +314,7 @@ def compute_attribution(
         accrued = px[bbg].get(ACCRUED_FIELD, {}) if is_bond else {}
         fx_ser = fx.get(ccy, {})
 
-        tr = trades[trades["id"] == _id]
+        tr = trades[(trades["id"] == _id) & (trades["strategy"] == strat)]
         prev_day = None
         for day in calendar:
             pos_before = float(tr.loc[tr["trade_date"] < day, "quantity"].sum())
@@ -342,7 +346,7 @@ def compute_attribution(
                     "date": day,
                     "id": _id,
                     "bbg_ticker": bbg,
-                    "strategy": tr["strategy"].iloc[0] if not tr.empty else "",
+                    "strategy": strat,
                     "currency": ccy,
                     "asset_class": meta["asset_class"],
                     "position": pos_after,
@@ -400,7 +404,9 @@ def strategy_breakdown(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
 
 def instrument_breakdown(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
     suffix = "usd" if ccy == "usd" else "local"
-    last_pos = attr.sort_values("date").groupby("id")["position"].last()
+    # Latest position per (strategy, id) — an id can appear in several strategies.
+    last_pos = (attr.sort_values("date").groupby(["strategy", "id"])["position"]
+                .last().rename("position").reset_index())
     g = attr.groupby(["strategy", "id", "bbg_ticker", "currency"])[
         [f"price_{suffix}", f"carry_{suffix}", f"total_{suffix}"]
     ].sum().rename(columns={
@@ -408,5 +414,5 @@ def instrument_breakdown(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
         f"carry_{suffix}": "carry_pnl",
         f"total_{suffix}": "total_pnl",
     }).reset_index()
-    g["position"] = g["id"].map(last_pos)
+    g = g.merge(last_pos, on=["strategy", "id"], how="left")
     return g.sort_values(["strategy", "total_pnl"], ascending=[True, False])
