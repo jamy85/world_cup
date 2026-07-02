@@ -136,19 +136,23 @@ def _multiplier_from_ref(ref) -> float | None:
     """P&L per 1.0 price move for a futures contract, from Bloomberg static data.
 
     Preference order:
-      1. ``FUT_VAL_PT`` — Bloomberg's "value of a price point" (direct), when numeric.
-      2. ``FUT_TICK_VAL / FUT_TICK_SIZE`` — money per tick ÷ price per tick, which
-         equals money per 1.0 price move. Well-defined even when FUT_VAL_PT is
-         reported as ``'varies'``.
+      1. ``FUT_TICK_VAL / FUT_TICK_SIZE`` — money per tick ÷ price per tick, i.e.
+         money per 1.0 price move. This is the **universal** quantity: it is
+         defined for every futures contract, including yield-quoted ones like
+         Australian 3y/10y bond futures (YM/XM), where the "value of a price
+         point" is not constant and Bloomberg reports ``FUT_VAL_PT = 'varies'``.
+      2. ``FUT_VAL_PT`` — Bloomberg's value of a price point, used only as a
+         fallback when the tick fields are unavailable.
     Returns None if neither can be derived.
+
+    Note: for yield-quoted contracts the true tick value drifts with the price
+    level; using the current tick value is the standard static approximation for
+    daily P&L (exact repricing would require the underlying yield model).
     """
-    pv = _num(ref.get("FUT_VAL_PT"))
-    if pv is not None:
-        return pv
     tv, ts = _num(ref.get("FUT_TICK_VAL")), _num(ref.get("FUT_TICK_SIZE"))
     if tv is not None and ts:
         return tv / ts
-    return None
+    return _num(ref.get("FUT_VAL_PT"))
 
 
 def build_instruments(trades, provided, provider, defaults):

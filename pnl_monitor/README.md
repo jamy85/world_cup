@@ -76,9 +76,11 @@ from Bloomberg per contract:
 * **Bloomberg ticker** — a bare id (e.g. `DUH6`) gets the portfolio's yellow key
   appended (`DUH6 Comdty`); ids that already include a yellow key are used as-is.
 * **Currency** — from `CRNCY`.
-* **Futures multiplier** (P&L per 1.0 price move) — from `FUT_VAL_PT`, falling
-  back to `FUT_TICK_VAL / FUT_TICK_SIZE` when `FUT_VAL_PT` is non-numeric
-  (Bloomberg reports `'varies'` for some contracts).
+* **Futures multiplier** (P&L per 1.0 price move) — from
+  `FUT_TICK_VAL / FUT_TICK_SIZE`, the universal quantity defined for every
+  contract. `FUT_VAL_PT` is used only as a fallback if the tick fields are
+  missing. This handles yield-quoted contracts such as Australian 3y/10y bond
+  futures (YM/XM), where `FUT_VAL_PT` is reported as `'varies'`.
 
 Only when Bloomberg can't resolve a value — or you're offline / in mock — is a
 per-portfolio default used (see `config.py`), and the app warns which tickers
@@ -112,6 +114,10 @@ portfolio toggles EUR/USD.
 ## Limitations
 
 - Futures carry/roll is not separately attributed (shown within price).
+- Yield-quoted futures (e.g. Australian 3y/10y bond futures) have a tick value
+  that drifts with the price level; the app uses the current `FUT_TICK_VAL`
+  as a static multiplier — the standard daily-P&L approximation, not an exact
+  yield reprice.
 - FX conversion of a daily P&L flow uses that day's rate (standard convention);
   it is not a full multi-currency return decomposition.
 - Carry uses Bloomberg `INT_ACC`; if a bond doesn't serve accrued historically,
