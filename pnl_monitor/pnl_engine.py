@@ -128,62 +128,101 @@ def _num(x):
     return v if v == v else None  # reject NaN
 
 
+# Bloomberg static fields fetched per contract to resolve currency & multiplier.
+REF_FIELDS = ["CRNCY", "FUT_VAL_PT", "FUT_TICK_VAL", "FUT_TICK_SIZE"]
+
+
+def _multiplier_from_ref(ref) -> float | None:
+    """P&L per 1.0 price move for a futures contract, from Bloomberg static data.
+
+    Preference order:
+      1. ``FUT_VAL_PT`` — Bloomberg's "value of a price point" (direct), when numeric.
+      2. ``FUT_TICK_VAL / FUT_TICK_SIZE`` — money per tick ÷ price per tick, which
+         equals money per 1.0 price move. Well-defined even when FUT_VAL_PT is
+         reported as ``'varies'``.
+    Returns None if neither can be derived.
+    """
+    pv = _num(ref.get("FUT_VAL_PT"))
+    if pv is not None:
+        return pv
+    tv, ts = _num(ref.get("FUT_TICK_VAL")), _num(ref.get("FUT_TICK_SIZE"))
+    if tv is not None and ts:
+        return tv / ts
+    return None
+
+
 def build_instruments(trades, provided, provider, defaults):
     """Return ``(instruments_df, info)`` covering every traded id.
 
-    Ids present in ``provided`` (the instruments file) are used as-is. Ids not
-    found there are auto-resolved from ``defaults`` — and, when the provider is
-    a live Bloomberg session, enriched with real currency (``CRNCY``) and
-    futures multiplier (``FUT_VAL_PT``). Non-numeric multipliers (Bloomberg
-    returns ``'varies'`` for some contracts) or missing values fall back to the
-    default multiplier instead of crashing.
+    Currency and futures multiplier are retrieved from Bloomberg on the fly for
+    each contract (batched into one request). The instruments file is an
+    optional override; any field it supplies takes precedence, and any it omits
+    (e.g. a blank ``point_value``) is filled from Bloomberg. A hardcoded default
+    is used only as a last resort when Bloomberg can't supply a numeric value
+    (offline/mock, or a contract with no derivable multiplier).
 
-    ``info`` is ``{"inferred": [...], "no_multiplier": [...]}``:
-      * ``inferred`` — ids whose metadata came from defaults/Bloomberg, not the file.
-      * ``no_multiplier`` — ids where a numeric multiplier couldn't be determined
-        and the default was used (set ``point_value`` manually for accurate P&L).
+    ``info`` is ``{"inferred": [...], "no_multiplier": [...]}``.
     """
     ids = sorted(trades["id"].unique())
     suffix = defaults.get("bbg_suffix", "")
     default_ac = defaults.get("default_asset_class", "future")
-    rows, inferred, no_multiplier = [], [], []
+    default_pv = float(defaults.get("default_point_value", 1000.0))
+    live = bool(getattr(provider, "is_live", False))
 
+    # Pass 1 — decide each id's Bloomberg ticker, asset class, and what the file
+    # (if any) already pins down.
+    plan = []
     for _id in ids:
         if provided is not None and _id in provided.index:
             m = provided.loc[_id]
+            bbg = str(m["bbg_ticker"]).strip()
             ac = str(m["asset_class"]).lower()
             ccy = str(m["currency"]).upper()
             pv = _num(m["point_value"])
-            if pv is None:  # blank / 'varies' in the file
-                pv = 0.01 if ac == "bond" else float(defaults.get("default_point_value", 1000.0))
-                no_multiplier.append(_id)
-            rows.append({"id": _id, "bbg_ticker": m["bbg_ticker"],
-                         "asset_class": ac, "currency": ccy, "point_value": pv})
-            continue
+            plan.append({"id": _id, "bbg": bbg, "ac": ac, "ccy": ccy,
+                         "pv": pv, "from_file": True})
+        else:
+            bbg = _id if (_has_yellow_key(_id) or not suffix) else f"{_id} {suffix}"
+            plan.append({"id": _id, "bbg": bbg, "ac": default_ac, "ccy": None,
+                         "pv": None, "from_file": False})
 
-        ac = default_ac
-        bbg = _id if (_has_yellow_key(_id) or not suffix) else f"{_id} {suffix}"
-        ccy = defaults.get("default_currency", "USD")
-        pv = 0.01 if ac == "bond" else float(defaults.get("default_point_value", 1000.0))
-        pv_from_bbg = False
-
-        if getattr(provider, "is_live", False):
+    # Batch-fetch Bloomberg reference for every contract that still needs
+    # currency or a multiplier.
+    ref_map = {}
+    if live:
+        need = sorted({p["bbg"] for p in plan
+                       if p["ccy"] is None or (p["ac"] != "bond" and p["pv"] is None)})
+        if need:
             try:
-                ref = provider.reference([bbg], ["CRNCY", "FUT_VAL_PT"]).get(bbg, {})
+                ref_map = provider.reference(need, REF_FIELDS)
             except Exception:
-                ref = {}
-            if ref.get("CRNCY"):
-                ccy = str(ref["CRNCY"]).upper()
-            if ac != "bond":
-                fv = _num(ref.get("FUT_VAL_PT"))
-                if fv is not None:
-                    pv, pv_from_bbg = fv, True
+                ref_map = {}
 
-        rows.append({"id": _id, "bbg_ticker": bbg, "asset_class": ac,
+    # Pass 2 — assemble final rows.
+    rows, inferred, no_multiplier = [], [], []
+    for p in plan:
+        ref = ref_map.get(p["bbg"], {})
+        ac = p["ac"]
+        ccy = p["ccy"] or (str(ref["CRNCY"]).upper() if ref.get("CRNCY")
+                           else defaults.get("default_currency", "USD"))
+
+        pv = p["pv"]
+        if pv is None:
+            if ac == "bond":
+                pv = 0.01
+            else:
+                pv = _multiplier_from_ref(ref)
+                if pv is None:
+                    pv, missing_mult = default_pv, True
+                else:
+                    missing_mult = False
+                if missing_mult:
+                    no_multiplier.append(p["id"])
+
+        rows.append({"id": p["id"], "bbg_ticker": p["bbg"], "asset_class": ac,
                      "currency": ccy, "point_value": pv})
-        inferred.append(_id)
-        if ac != "bond" and not pv_from_bbg:
-            no_multiplier.append(_id)
+        if not p["from_file"]:
+            inferred.append(p["id"])
 
     info = {"inferred": inferred, "no_multiplier": no_multiplier}
     return pd.DataFrame(rows).set_index("id"), info

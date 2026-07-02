@@ -75,9 +75,13 @@ file is auto-resolved:
 
 * **Bloomberg ticker** — a bare id (e.g. `DUH6`) gets the portfolio's yellow key
   appended (`DUH6 Comdty`); ids that already include a yellow key are used as-is.
-* **Currency & multiplier** — pulled live from Bloomberg (`CRNCY`, `FUT_VAL_PT`)
-  when connected; otherwise portfolio defaults are used and the app warns that
-  they're placeholders.
+* **Currency & multiplier** — retrieved live from Bloomberg per contract (one
+  batched request). Currency from `CRNCY`; the futures multiplier (P&L per 1.0
+  price move) from `FUT_VAL_PT`, falling back to `FUT_TICK_VAL / FUT_TICK_SIZE`
+  when `FUT_VAL_PT` is non-numeric (Bloomberg reports `'varies'` for some
+  contracts). Only if neither resolves — or you're offline/in mock — is a
+  portfolio default used, and the app warns which tickers need a manual
+  `point_value`.
 
 Provide the file only when you want to **override** those (exact multipliers,
 currencies, ISIN→ticker mappings, or to work precisely in mock mode):
