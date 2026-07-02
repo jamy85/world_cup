@@ -1,9 +1,14 @@
 # Daily P&L Monitor
 
-A locally-hosted Streamlit app that computes a **trade-blotter-driven P&L time
-series** for two portfolios, with **carry vs. spread (price) attribution**.
-Prices and FX come from a local **Bloomberg Terminal** (Desktop API), with a
-deterministic **mock** fallback so the app runs anywhere.
+A locally-hosted **Shiny for Python** app (the Python equivalent of R Shiny —
+reactive `ui` + `server`, fully customizable layout) that computes a
+**trade-blotter-driven P&L time series** for two portfolios, with **carry vs.
+spread (price) attribution**. Prices and FX come from a local **Bloomberg
+Terminal** (Desktop API), with a deterministic **mock** fallback so the app runs
+anywhere.
+
+The UI (`app.py`) is fully separated from the compute engine (`pnl_engine.py`)
+and data layer (`providers.py`), so you can restyle or extend it freely.
 
 * **Futures portfolio** — futures in various currencies, reported in **USD**.
 * **Cash-bond portfolio** — EUR government bonds, typically **spread trades**
@@ -21,16 +26,15 @@ prices — that's expected.
 ## Setup (on your Bloomberg machine)
 
 ```bash
-cd pnl_monitor
 python -m venv .venv && . .venv/Scripts/activate      # or source .venv/bin/activate
 pip install -r requirements.txt
 # Bloomberg Desktop API (only works with a running Terminal):
 pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ blpapi
 
-streamlit run pnl_app.py       # with the Terminal open + logged in
+shiny run --reload app.py       # with the Terminal open + logged in
 ```
 
-Open http://localhost:8501. The header shows **🟢 LIVE** (Bloomberg) or
+Open http://localhost:8000. The status line shows **🟢 LIVE** (Bloomberg) or
 **🟡 MOCK** (synthetic prices).
 
 ## Inputs — two CSVs per portfolio
@@ -91,7 +95,7 @@ portfolio toggles EUR/USD.
 
 ## Files
 
-- `pnl_app.py` — Streamlit UI (portfolio selector, currency toggle, charts)
+- `app.py` — Shiny for Python UI (reactive; portfolio selector, currency toggle, charts)
 - `pnl_engine.py` — blotter → daily attribution + aggregations
 - `providers.py` — `BloombergProvider` (live) and `MockProvider` (fallback)
 - `trades_futures.csv` / `instruments_futures.csv` — sample futures book

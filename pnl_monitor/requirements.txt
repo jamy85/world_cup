@@ -1,6 +1,6 @@
-streamlit>=1.40
+shiny>=1.0
+plotly>=5.20
 pandas>=2.0
-altair>=5.0
 # Bloomberg Desktop API — install separately, only works with a local Terminal:
 #   pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ blpapi
 # The app runs without it (falls back to mock prices).
