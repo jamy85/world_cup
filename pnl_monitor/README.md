@@ -16,6 +16,9 @@ layer (`providers.py`), so you can restyle, extend, or add portfolios freely.
   (long one bond / short another), reported in **EUR or USD**, with **carry**
   and **spread compression** shown separately per strategy.
 
+The cumulative-P&L chart toggles between the **total portfolio** (with the
+carry / spread-price split for bonds) and **one line per strategy**.
+
 ## Why it must run locally (and can't fetch Bloomberg from the cloud)
 
 Bloomberg market data isn't a public REST API. The `blpapi` Desktop API connects

@@ -124,14 +124,24 @@ def server(input, output, session):
         b = bundle()
         if "attr" not in b or b["attr"].empty:
             return ui.p("No data to plot.", class_="text-muted")
-        daily = eng.daily_totals(b["attr"], b["ccy"])
-        series = [("cum_total", "Total")]
-        if b["cfg"]["show_carry"]:
-            series += [("cum_price", "Spread / price"), ("cum_carry", "Carry")]
+
         fig = go.Figure()
-        for col, name in series:
-            fig.add_scatter(x=daily["date"], y=daily[col], mode="lines", name=name,
-                            line=dict(color=config.SERIES_COLORS[col], width=2))
+        if input.chart_mode() == "strategy":
+            # One cumulative total-P&L line per strategy.
+            g = eng.daily_by_strategy(b["attr"], b["ccy"])
+            for strat, sub in g.groupby("strategy"):
+                fig.add_scatter(x=sub["date"], y=sub["cum_total"], mode="lines",
+                                name=strat, line=dict(width=2))
+        else:
+            # Total portfolio, split into carry / spread-price for bonds.
+            daily = eng.daily_totals(b["attr"], b["ccy"])
+            series = [("cum_total", "Total")]
+            if b["cfg"]["show_carry"]:
+                series += [("cum_price", "Spread / price"), ("cum_carry", "Carry")]
+            for col, name in series:
+                fig.add_scatter(x=daily["date"], y=daily[col], mode="lines", name=name,
+                                line=dict(color=config.SERIES_COLORS[col], width=2))
+
         fig.update_layout(
             margin=dict(l=10, r=10, t=10, b=10),
             yaxis_title=f"Cumulative P&L ({b['ccy_label']})",

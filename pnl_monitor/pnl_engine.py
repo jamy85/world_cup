@@ -372,6 +372,20 @@ def daily_totals(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
     return g.reset_index()
 
 
+def daily_by_strategy(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
+    """Long-form daily & cumulative total P&L per strategy.
+
+    Columns: date, strategy, total, cum_total — one row per (day, strategy),
+    ready to plot as one cumulative line per strategy.
+    """
+    suffix = "usd" if ccy == "usd" else "local"
+    g = (attr.groupby(["date", "strategy"])[f"total_{suffix}"].sum()
+         .reset_index().rename(columns={f"total_{suffix}": "total"}))
+    g = g.sort_values(["strategy", "date"])
+    g["cum_total"] = g.groupby("strategy")["total"].cumsum()
+    return g
+
+
 def strategy_breakdown(attr: pd.DataFrame, ccy: str = "usd") -> pd.DataFrame:
     """Per-strategy carry vs price (spread compression) totals over the window."""
     suffix = "usd" if ccy == "usd" else "local"

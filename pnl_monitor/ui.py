@@ -44,6 +44,11 @@ app_ui = ui.page_sidebar(
     ui.output_ui("headline"),
     ui.card(
         ui.card_header("Cumulative P&L"),
+        ui.input_radio_buttons(
+            "chart_mode", None,
+            choices={"total": "Total portfolio", "strategy": "By strategy"},
+            selected="total", inline=True,
+        ),
         ui.output_ui("cum_chart"),
         full_screen=True,
     ),
