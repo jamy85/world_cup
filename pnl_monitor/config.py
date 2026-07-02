@@ -19,12 +19,22 @@ PORTFOLIOS = {
         "instruments": "instruments_futures.csv",
         "multi_ccy": False,   # reported in USD only
         "show_carry": False,  # futures carry is embedded in price
+        # Defaults used to auto-resolve tickers not found in the instruments
+        # file (currency & point_value come from Bloomberg when live):
+        "default_asset_class": "future",
+        "default_currency": "USD",
+        "default_point_value": 1000.0,
+        "bbg_suffix": "Comdty",   # appended to a bare id lacking a yellow key
     },
     "Cash bonds (EUR)": {
         "trades": "trades_bonds.csv",
         "instruments": "instruments_bonds.csv",
         "multi_ccy": True,    # EUR or USD
         "show_carry": True,
+        "default_asset_class": "bond",
+        "default_currency": "EUR",
+        "default_point_value": 0.01,
+        "bbg_suffix": "Govt",
     },
 }
 

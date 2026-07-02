@@ -109,6 +109,61 @@ def load_instruments(path_or_buffer) -> pd.DataFrame:
     return df.set_index("id")
 
 
+# Bloomberg "yellow key" market sectors — if an id already ends in one, we use
+# it as the Bloomberg ticker verbatim; otherwise we append the portfolio suffix.
+YELLOW_KEYS = {"COMDTY", "INDEX", "CURNCY", "GOVT", "CORP", "MTGE", "EQUITY", "PFD", "MUNI"}
+
+
+def _has_yellow_key(id_str: str) -> bool:
+    parts = id_str.strip().split()
+    return len(parts) >= 2 and parts[-1].upper() in YELLOW_KEYS
+
+
+def build_instruments(trades, provided, provider, defaults):
+    """Return ``(instruments_df, inferred_ids)`` covering every traded id.
+
+    Ids present in ``provided`` (the instruments file) are used as-is. Ids not
+    found there are auto-resolved from ``defaults`` — and, when the provider is
+    a live Bloomberg session, enriched with real currency (``CRNCY``) and
+    futures multiplier (``FUT_VAL_PT``). ``inferred_ids`` lists what was guessed
+    so the UI can warn that those numbers rely on defaults / Bloomberg.
+    """
+    ids = sorted(trades["id"].unique())
+    suffix = defaults.get("bbg_suffix", "")
+    rows, inferred = [], []
+    for _id in ids:
+        if provided is not None and _id in provided.index:
+            m = provided.loc[_id]
+            rows.append({
+                "id": _id, "bbg_ticker": m["bbg_ticker"],
+                "asset_class": str(m["asset_class"]).lower(),
+                "currency": str(m["currency"]).upper(),
+                "point_value": float(m["point_value"]),
+            })
+            continue
+
+        ac = defaults.get("default_asset_class", "future")
+        bbg = _id if (_has_yellow_key(_id) or not suffix) else f"{_id} {suffix}"
+        ccy = defaults.get("default_currency", "USD")
+        pv = 0.01 if ac == "bond" else float(defaults.get("default_point_value", 1000.0))
+
+        if getattr(provider, "is_live", False):
+            try:
+                ref = provider.reference([bbg], ["CRNCY", "FUT_VAL_PT"]).get(bbg, {})
+            except Exception:
+                ref = {}
+            if ref.get("CRNCY"):
+                ccy = str(ref["CRNCY"]).upper()
+            if ac != "bond" and ref.get("FUT_VAL_PT"):
+                pv = float(ref["FUT_VAL_PT"])
+
+        rows.append({"id": _id, "bbg_ticker": bbg, "asset_class": ac,
+                     "currency": ccy, "point_value": pv})
+        inferred.append(_id)
+
+    return pd.DataFrame(rows).set_index("id"), inferred
+
+
 # ---------------------------------------------------------------------------
 # Core computation
 # ---------------------------------------------------------------------------

@@ -38,6 +38,14 @@ class PriceProvider:
     def fx_to_usd_series(self, currencies, start, end):
         raise NotImplementedError
 
+    def reference(self, tickers, fields):
+        """Static reference data, ``{ticker: {field: value}}``.
+
+        Used to auto-resolve currency / contract multiplier for tickers not in
+        the instruments file. Backends may return an empty dict per ticker.
+        """
+        return {}
+
     # -- shared helper -----------------------------------------------------
     @staticmethod
     def value_on_or_before(series: Mapping[dt.date, float], target: dt.date):
@@ -230,6 +238,31 @@ class BloombergProvider(PriceProvider):
                     usd[d] = 1.0
                 d += dt.timedelta(days=1)
             out["USD"] = usd
+        return out
+
+    def reference(self, tickers, fields):
+        req = self._svc.createRequest("ReferenceDataRequest")
+        for t in tickers:
+            req.append("securities", t)
+        for f in fields:
+            req.append("fields", f)
+        self._session.sendRequest(req)
+        out = {}
+        for msg in self._drain():
+            data = msg.getElement("securityData")
+            for i in range(data.numValues()):
+                sec = data.getValueAsElement(i)
+                ticker = sec.getElementAsString("security")
+                fd = sec.getElement("fieldData")
+                vals = {}
+                for f in fields:
+                    if fd.hasElement(f):
+                        el = fd.getElement(f)
+                        try:
+                            vals[f] = el.getValueAsFloat()
+                        except Exception:
+                            vals[f] = el.getValueAsString()
+                out[ticker] = vals
         return out
 
 

@@ -33,18 +33,43 @@ def server(input, output, session):
         cfg = config.PORTFOLIOS[input.portfolio()]
         try:
             trades = _read_csv_input(input.trades_file, cfg["trades"], eng.load_trades)
-            instruments = _read_csv_input(
-                input.instruments_file, cfg["instruments"], eng.load_instruments)
         except Exception as exc:
-            return {"error": f"Could not load inputs: {exc}", "cfg": cfg}
+            return {"error": f"Could not load trades: {exc}", "cfg": cfg}
+
+        # The instruments file is optional: it overrides / supplements the
+        # auto-resolved metadata. Missing it isn't an error.
+        provided = None
+        if input.instruments_file():
+            try:
+                provided = eng.load_instruments(input.instruments_file()[0]["datapath"])
+            except Exception as exc:
+                return {"error": f"Could not load instruments file: {exc}", "cfg": cfg}
+        else:
+            try:
+                provided = eng.load_instruments(os.path.join(config.HERE, cfg["instruments"]))
+            except Exception:
+                provided = None  # sample file absent — rely fully on inference
 
         provider, warning = providers.get_provider(prefer_bloomberg=input.use_bbg())
         start = None if input.from_first_trade() else input.start()
         try:
+            instruments, inferred = eng.build_instruments(trades, provided, provider, cfg)
             attr = eng.compute_attribution(trades, instruments, provider, input.end(), start)
         except Exception as exc:
             return {"error": f"P&L computation failed: {exc}", "cfg": cfg,
                     "provider": provider, "warning": warning}
+
+        if inferred:
+            src = "Bloomberg" if provider.is_live else "portfolio defaults"
+            note = (
+                f"Auto-resolved {len(inferred)} ticker(s) not in the instruments "
+                f"file (currency & point_value from {src}): "
+                f"{', '.join(inferred[:8])}{'…' if len(inferred) > 8 else ''}. "
+            )
+            if not provider.is_live:
+                note += ("These use placeholder currency/point_value — add rows to "
+                         "the instruments file, or run against Bloomberg for exact values.")
+            warning = (warning + "  " if warning else "") + note
 
         ccy = input.ccy() if cfg["multi_ccy"] else "usd"
         return {

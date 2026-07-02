@@ -68,7 +68,19 @@ works in both Community and Professional.
 Positions are rebuilt cumulatively from the blotter, so P&L is **trade-date
 aware** — no static snapshot assumption.
 
-### 2. Instrument reference (`instruments_*.csv`) — static data
+### 2. Instrument reference (`instruments_*.csv`) — **optional** static data
+
+You can run with **just a blotter**. Any ticker not found in the instruments
+file is auto-resolved:
+
+* **Bloomberg ticker** — a bare id (e.g. `DUH6`) gets the portfolio's yellow key
+  appended (`DUH6 Comdty`); ids that already include a yellow key are used as-is.
+* **Currency & multiplier** — pulled live from Bloomberg (`CRNCY`, `FUT_VAL_PT`)
+  when connected; otherwise portfolio defaults are used and the app warns that
+  they're placeholders.
+
+Provide the file only when you want to **override** those (exact multipliers,
+currencies, ISIN→ticker mappings, or to work precisely in mock mode):
 
 | column | meaning |
 |---|---|
@@ -81,6 +93,9 @@ aware** — no static snapshot assumption.
 **`point_value`:** bonds quoted per 100 with `quantity` = face → `0.01`
 (1 clean point on 1,000,000 face = 10,000). Futures → contract multiplier
 (e.g. 10Y T-Note = `1000`).
+
+Per-portfolio defaults (asset class, currency, point_value, yellow-key suffix)
+live in `config.py`.
 
 ## P&L attribution
 
