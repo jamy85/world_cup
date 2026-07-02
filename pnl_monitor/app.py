@@ -229,7 +229,14 @@ app = App(app_ui, server)
 
 if __name__ == "__main__":
     # Lets you launch straight from an IDE (e.g. PyCharm's green Run button)
-    # instead of the `shiny run` command line.
+    # instead of the `shiny run` command line. If you DON'T see the banner below
+    # when you press Run, you're executing an older copy of this file.
     from shiny import run_app
 
-    run_app(app, host="127.0.0.1", port=8000, reload=False, launch_browser=True)
+    print("=" * 60)
+    print(" Daily P&L Monitor starting…")
+    print(" Open  http://127.0.0.1:8000  in your browser")
+    print(" (Press Ctrl+C in this console to stop)")
+    print("=" * 60, flush=True)
+
+    run_app(app, host="127.0.0.1", port=8000)
