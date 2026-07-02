@@ -225,3 +225,11 @@ def server(input, output, session):
 
 
 app = App(app_ui, server)
+
+
+if __name__ == "__main__":
+    # Lets you launch straight from an IDE (e.g. PyCharm's green Run button)
+    # instead of the `shiny run` command line.
+    from shiny import run_app
+
+    run_app(app, host="127.0.0.1", port=8000, reload=False, launch_browser=True)

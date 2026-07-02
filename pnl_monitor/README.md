@@ -37,6 +37,21 @@ shiny run --reload app.py       # with the Terminal open + logged in
 Open http://localhost:8000. The status line shows **🟢 LIVE** (Bloomberg) or
 **🟡 MOCK** (synthetic prices).
 
+### Running in PyCharm
+
+`app.py` has an `if __name__ == "__main__"` block, so you can just open it and
+press the green **Run** button — it starts the server and opens a browser.
+
+1. **Set the interpreter:** *Settings → Project → Python Interpreter →* add the
+   `.venv` you created above (or let PyCharm create one and `pip install -r
+   requirements.txt`).
+2. Right-click `app.py` → **Run 'app'**. (Live reload isn't active this way; to
+   get auto-reload use a terminal run configuration with `shiny run --reload
+   app.py`, or edit the `run_app(..., reload=True)` call.)
+
+PyCharm Professional also has native Shiny support, but the Run button above
+works in both Community and Professional.
+
 ## Inputs — two CSVs per portfolio
 
 ### 1. Trade blotter (`trades_*.csv`) — drives the P&L time series
